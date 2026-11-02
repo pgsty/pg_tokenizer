@@ -8,6 +8,5 @@ CLAUDE.md
 /target*
 *.iml
 **/*.rs.bk
-Cargo.lock
 .vscode/
 .gdb_history

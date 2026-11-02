@@ -32,7 +32,7 @@
 
 <br/>
 
-- `tokenizer_catalog.create_lindera_model(name TEXT, config TEXT)`: Create a lindera model.
+- `tokenizer_catalog.create_lindera_model(name TEXT, config TEXT)`: Create a Lindera model. Lindera 6 dictionary URIs and legacy dictionary tables are supported; see [Lindera model configuration and upgrade notes](06-model.md#lindera-model).
 - `tokenizer_catalog.drop_lindera_model(name TEXT)`: Drop a lindera model.
 
 <br/>

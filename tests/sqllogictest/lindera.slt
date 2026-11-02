@@ -7,8 +7,7 @@ statement ok
 SELECT tokenizer_catalog.create_lindera_model('lindera_ipadic', $$
 [segmenter]
 mode = "normal"
-  [segmenter.dictionary]
-  kind = "ipadic"
+dictionary = "embedded://ipadic"
 [[character_filters]]
 kind = "unicode_normalize"
   [character_filters.args]
@@ -80,12 +79,39 @@ $$);
 query T
 SELECT tokenizer_catalog.tokenize('関西国際空港限定トートバッグ', 'lindera_ipadic');
 ----
-{372979,374175}
+{372982,374178}
 
 query T
 SELECT tokenizer_catalog.tokenize('東京スカイツリーの最寄り駅はとうきょうスカイツリー駅です', 'lindera_ipadic');
 ----
-{250023,89247,91808,245235,47803,21418,89247,91808,383791}
+{250026,89250,91811,245238,47806,21421,89250,91811,383794}
 
 statement ok
 SELECT tokenizer_catalog.drop_lindera_model('lindera_ipadic');
+
+# Catalog JSON created before the Lindera 6 upgrade must still load.
+statement ok
+INSERT INTO tokenizer_catalog.model (name, config) VALUES
+('lindera_legacy', '{"lindera":{"segmenter":{"mode":"normal","dictionary":{"kind":"ipadic"}}}}');
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('lindera_legacy', $$
+model = "lindera_legacy"
+$$);
+
+query T
+SELECT tokenizer_catalog.tokenize('関西国際空港限定トートバッグ', 'lindera_legacy');
+----
+{372982,374178}
+
+# Lindera 6 unknown-word IDs are lexicon-local numbers, not u32::MAX.
+query T
+SELECT tokenizer_catalog.tokenize('トートバッグ', 'lindera_legacy');
+----
+{}
+
+statement ok
+SELECT tokenizer_catalog.drop_tokenizer('lindera_legacy');
+
+statement ok
+SELECT tokenizer_catalog.drop_lindera_model('lindera_legacy');

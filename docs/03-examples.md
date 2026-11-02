@@ -139,8 +139,7 @@ CREATE TABLE documents (
 SELECT create_lindera_model('lindera_ipadic', $$
 [segmenter]
 mode = "normal"
-  [segmenter.dictionary]
-  kind = "ipadic"
+dictionary = "embedded://ipadic"
 [[character_filters]]
 kind = "unicode_normalize"
   [character_filters.args]

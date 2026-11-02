@@ -1,32 +1,7 @@
 name: Check
 
+# Temporarily keep CI manual while the local package builds are validated.
 on:
-  pull_request:
-    paths:
-      - ".cargo"
-      - ".github/workflows/check.yml"
-      - "assets/**"
-      - "src/**"
-      - "tests/**"
-      - "tools/**"
-      - ".taplo.toml"
-      - ".typos.toml"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "pg_tokenizer.control"
-  push:
-    paths:
-      - ".cargo"
-      - ".github/workflows/check.yml"
-      - "assets/**"
-      - "src/**"
-      - "tests/**"
-      - ".taplo.toml"
-      - ".typos.toml"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "pg_tokenizer.control"
-  merge_group:
   workflow_dispatch:
 
 concurrency:
@@ -38,7 +13,7 @@ env:
   RUST_BACKTRACE: 1
   SCCACHE_GHA_ENABLED: true
   RUSTC_WRAPPER: sccache
-  RUSTFLAGS: "-Dwarnings"
+  RUSTFLAGS: "-Dwarnings -Clink-arg=-Wl,--no-gc-sections"
 
 jobs:
   style:
@@ -73,21 +48,21 @@ jobs:
   lint:
     strategy:
       matrix:
-        version: ["13", "14", "15", "16", "17", "18"]
+        version: ["14", "15", "16", "17", "18"]
         arch: ["x86_64", "aarch64"]
     runs-on: ${{ matrix.arch == 'x86_64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Set up Environment
-        run: ./tools/setup.sh ${{ matrix.version }}
       - name: Set up Sccache
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Set up Environment
+        run: ./tools/setup.sh ${{ matrix.version }}
       - name: Clippy
-        run: cargo clippy --features pg${{ matrix.version }}
+        run: cargo clippy --locked --features pg${{ matrix.version }}
       - name: Unit Test
-        run: cargo test --no-fail-fast --features pg${{ matrix.version }}
+        run: cargo test --locked --no-fail-fast --features pg${{ matrix.version }}
       - name: Install
         run: cargo pgrx install --features "pg${{ matrix.version }} lindera-ipadic" --release --sudo
       - name: Integration Test

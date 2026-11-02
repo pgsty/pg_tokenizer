@@ -6,7 +6,7 @@ printf "VERSION = ${VERSION}\n"
 printf "ARCH = ${ARCH}\n"
 printf "PLATFORM = ${PLATFORM}\n"
 
-cargo build --lib --features pg$VERSION --release
+cargo build --locked --lib --features pg$VERSION --release
 cargo pgrx schema --features pg$VERSION --out ./target/schema.sql
 
 mkdir -p ./build/zip

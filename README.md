@@ -7,7 +7,7 @@
 [![Version: v0.1.1](https://img.shields.io/badge/Version-v0.1.1-slategray?style=flat)](https://github.com/pgsty/pg_tokenizer/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-slategray?style=flat&logo=opensourceinitiative&logoColor=green)](https://github.com/pgsty/pg_tokenizer/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/pgsty/pg_tokenizer?style=flat&logo=github&logoColor=black&color=slategray)](https://star-history.com/#pgsty/pg_tokenizer&Date)
-[![PostgreSQL: 13-18](https://img.shields.io/badge/PostgreSQL-13--18-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
+[![PostgreSQL: 14-18](https://img.shields.io/badge/PostgreSQL-14--18-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
 
 **`pg_tokenizer`** is a standalone multilingual text analyzer and vocabulary tokenizer extension for PostgreSQL, designed to power full-text BM25 ranking with [`vchord_bm25`](https://github.com/pgsty/vchord_bm25) and hybrid retrieval with [`vchord`](https://github.com/pgsty/vchord).
 
@@ -97,6 +97,8 @@ SELECT tokenize(
 ```
 
 More SQL examples (custom corpus models, Chinese `jieba`, Japanese `lindera`) can be found in [docs/03-examples.md](docs/03-examples.md).
+
+When upgrading from Lindera 0.42 to 6.2, regenerate stored Lindera token arrays and rebuild their search indexes: the embedded IPADIC dictionary now assigns different token IDs. Existing model configurations remain accepted; see the [Lindera upgrade notes](docs/06-model.md#lindera-model).
 
 ---
 
