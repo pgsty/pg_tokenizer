@@ -1,3 +1,9 @@
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
+//
+// Copyright (c) 2025-2026 TensorChord Inc.
+
 use pgrx::{datum::DatumWithOid, pg_sys::panic::ErrorReportable, FromDatum, IntoDatum};
 
 pub fn spi_get_one<T>(query: &str, args: &[DatumWithOid]) -> Option<T>
