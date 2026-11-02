@@ -216,7 +216,7 @@ fn apply_text_analyzer_for_custom_model(text: &str, text_analyzer_name: &str) ->
     for i in 0..len {
         let token_len = results[i].len();
         if token_len > MAX_TOKEN_LENGTH {
-            pgrx::warning!("There is a custom table token whose length has exceeded MAX_TOKEN_LENGTH({MAX_TOKEN_LENGTH}). It will be cut off to multiple tokens. If you need to support long token, welcome to submit an issue to \"https://github.com/tensorchord/VectorChord-bm25/issues\".");
+            pgrx::warning!("There is a custom table token whose length has exceeded MAX_TOKEN_LENGTH({MAX_TOKEN_LENGTH}). It will be cut off to multiple tokens. If you need to support long token, welcome to submit an issue to \"https://github.com/pgsty/pg_tokenizer/issues\".");
 
             let replace_token = results[i][..MAX_TOKEN_LENGTH].to_string();
             let token = std::mem::replace(&mut results[i], replace_token);
