@@ -12,8 +12,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 2. Clone the Repository
 
 ```sh
-git clone https://github.com/silver-ymz/pg_tokenizer.rs
-cd pg_tokenizer.rs
+git clone https://github.com/pgsty/pg_tokenizer
+cd pg_tokenizer
 ```
 
 3. Install [`cargo-pgrx`](https://github.com/pgcentralfoundation/pgrx)

@@ -1,11 +1,21 @@
 # Installation
 
+## Linux Packages via `pig`
+
+On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04 (PostgreSQL 14–18), you can install pre-built native packages from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
+
+```bash
+curl -fsSL https://repo.pigsty.io/pig | bash
+pig repo add pgsql -u
+pig ext add pg_tokenizer
+```
+
 ## Docker
 
-The official `tensorchord/vchord-suite` Docker image comes pre-configured with several complementary extensions, you can find more details in the [VectorChord-images](https://github.com/tensorchord/VectorChord-images) repository:
-- `pg_tokenizer` - This extension
-- [`VectorChord-bm25`](https://github.com/tensorchord/VectorChord-bm25) - Native BM25 Ranking Index
-- [`VectorChord`](https://github.com/tensorchord/VectorChord) - Scalable, high-performance, and disk-efficient vector similarity search
+The [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/getting-started/vectorchord-suite/) Docker image comes pre-configured with the Vchord extension suite:
+- [`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer) - This extension (`pgsty/pg_tokenizer`)
+- [`vchord_bm25`](https://github.com/pgsty/vchord_bm25) - Native BM25 Ranking Index (`pgsty/vchord_bm25`)
+- [`vchord`](https://github.com/pgsty/vchord) - Scalable, high-performance, and disk-efficient vector similarity search (`pgsty/vchord`)
 - [`pgvector`](https://github.com/pgvector/pgvector) - Popular vector similarity search
 
 Simply run the Docker container as shown below:
@@ -40,7 +50,7 @@ CREATE EXTENSION pg_tokenizer;
 
 Debian packages(.deb) are used in distributions based on Debian, such as Ubuntu and many others. They can be easily installed by `dpkg` or `apt-get`.
 
-1. Download the deb package in [the release page](https://github.com/tensorchord/pg_tokenizer.rs/releases/latest), and type `sudo apt install postgresql-17-pg-tokenizer_*.deb` to install the deb package.
+1. Download the deb package in [the release page](https://github.com/pgsty/pg_tokenizer/releases/latest), and type `sudo apt install postgresql-17-pg-tokenizer_*.deb` to install the deb package.
 
 2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
 
@@ -91,10 +101,10 @@ pg_config --sharedir
 # /usr/share/pgsql
 ```
 
-3. Download the zip package in [the release page](https://github.com/tensorchord/pg_tokenizer.rs/releases/latest) and extract it to a temporary directory.
+3. Download the zip package in [the release page](https://github.com/pgsty/pg_tokenizer/releases/latest) and extract it to a temporary directory.
 
 ```sh
-wget https://github.com/tensorchord/pg_tokenizer.rs/releases/download/0.1.0/postgresql-17-pg-tokenizer_*_x86_64-linux-gnu.zip -O pg_tokenizer.zip
+wget https://github.com/pgsty/pg_tokenizer/releases/download/0.1.1/postgresql-17-pg-tokenizer_*_x86_64-linux-gnu.zip -O pg_tokenizer.zip
 unzip pg_tokenizer.zip -d pg_tokenizer
 ```
 

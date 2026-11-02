@@ -1,5 +1,10 @@
 .DS_Store
-.idea/
+.idea
+.code
+.codex
+.claude
+AGENTS.md
+CLAUDE.md
 /target*
 *.iml
 **/*.rs.bk
