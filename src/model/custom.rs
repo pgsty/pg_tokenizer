@@ -3,6 +3,8 @@
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
 // Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2026 PGSTY PTE. LTD.
+// Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
 use std::{collections::HashMap, ffi::CStr, sync::Arc};
 
