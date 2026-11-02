@@ -20,12 +20,12 @@ pub mod utils;
 compile_error!("Target is not supported.");
 
 #[cfg(not(any(
-    feature = "pg13",
     feature = "pg14",
     feature = "pg15",
     feature = "pg16",
     feature = "pg17",
-    feature = "pg18"
+    feature = "pg18",
+    feature = "pg19"
 )))]
 compile_error!("PostgreSQL version must be selected.");
 

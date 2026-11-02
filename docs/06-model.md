@@ -26,12 +26,15 @@ SELECT create_huggingface_model('bert_import', :'content');
 
 We support importing models using [lindera](https://github.com/lindera/lindera) config. You can use the `create_lindera_model` function to import a model.
 
+Lindera 6.2 uses dictionary URIs such as `embedded://ipadic`, or filesystem paths for external dictionaries. Existing `[segmenter.dictionary] kind = "ipadic"` configurations in the catalog and preload files remain supported. Legacy dictionary `path` and user-dictionary `path` tables are also accepted; external compiled dictionaries must be rebuilt with Lindera 6.
+
+The embedded IPADIC dictionary changes from the 2007-08-01 edition to the 2025-09-20 edition. Its token IDs differ from those produced by Lindera 0.42. After upgrading, regenerate stored Lindera token arrays and rebuild any indexes that consume them before mixing them with new query tokens. Unknown words continue to be omitted from the token IDs.
+
 ```sql
 SELECT tokenizer_catalog.create_lindera_model('lindera_ipadic', $$
 [segmenter]
 mode = "normal"
-  [segmenter.dictionary]
-  kind = "ipadic"
+dictionary = "embedded://ipadic"
 [[character_filters]]
 kind = "unicode_normalize"
   [character_filters.args]

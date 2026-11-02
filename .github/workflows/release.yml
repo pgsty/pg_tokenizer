@@ -1,8 +1,7 @@
 name: Release
 
+# Temporarily keep publishing manual while the local package builds are validated.
 on:
-  release:
-    types: [created]
   workflow_dispatch:
     inputs:
       tag:
@@ -46,7 +45,9 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: 1
-      RUSTFLAGS: "-Dwarnings"
+      SCCACHE_GHA_ENABLED: true
+      RUSTC_WRAPPER: sccache
+      RUSTFLAGS: "-Dwarnings -Clink-arg=-Wl,--no-gc-sections"
       SEMVER: ${{ needs.semver.outputs.SEMVER }}
       VERSION: ${{ matrix.version }}
       ARCH: ${{ matrix.arch }}
@@ -55,6 +56,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Set up Sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Set up Environment
         run: ./tools/setup.sh ${{ matrix.version }}
       - name: Build
