@@ -2,7 +2,7 @@
 
 ## Linux Packages via `pig`
 
-On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04 (PostgreSQL 14–18), you can install pre-built native packages from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
+On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04/26.04 (PostgreSQL 14–18), you can install the native package built for your distribution and architecture from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see the package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
 
 ```bash
 curl -fsSL https://repo.pigsty.io/pig | bash
@@ -10,9 +10,11 @@ pig repo add pgsql -u
 pig ext add pg_tokenizer
 ```
 
+Native RPM/DEB packages do not embed Lindera dictionaries. Provide external dictionaries compiled with Lindera 6. GitHub `.deb`/ZIP packages enable `lindera-ipadic`; other dictionaries are optional build features.
+
 ## Docker
 
-The [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/getting-started/vectorchord-suite/) Docker image comes pre-configured with the Vchord extension suite:
+The [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/vchord/getting-started/vectorchord-suite/) Docker image comes pre-configured with the Vchord extension suite:
 - [`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer) - This extension (`pgsty/pg_tokenizer`)
 - [`vchord_bm25`](https://github.com/pgsty/vchord_bm25) - Native BM25 Ranking Index (`pgsty/vchord_bm25`)
 - [`vchord`](https://github.com/pgsty/vchord) - Scalable, high-performance, and disk-efficient vector similarity search (`pgsty/vchord`)
@@ -44,19 +46,17 @@ CREATE EXTENSION pg_tokenizer;
 
 ## From Debian package
 
-> Installation from the Debian package requires a dependency on `GLIBC >= 2.35`, e.g:
-> - `Ubuntu 22.04` or later
-> - `Debian Bullseye` or later
+Use the `.deb` built for the exact Debian or Ubuntu release, PostgreSQL major version, and CPU architecture of the target host. The package is built separately for the supported distributions; its dependency metadata and the target distribution determine compatibility. Do not infer compatibility from a generic GLIBC version floor.
 
-Debian packages(.deb) are used in distributions based on Debian, such as Ubuntu and many others. They can be easily installed by `dpkg` or `apt-get`.
+Debian packages (`.deb`) are used in distributions based on Debian, such as Ubuntu and many others. They can be installed by `dpkg` or `apt-get`.
 
 1. Download the deb package in [the release page](https://github.com/pgsty/pg_tokenizer/releases/latest), and type `sudo apt install postgresql-17-pg-tokenizer_*.deb` to install the deb package.
 
 2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
 
 ```sh
-psql -U postgres -c 'ALTER SYSTEM SET shared_preload_libraries = "pg_tokenizer.so"'
-psql -U postgres -c 'ALTER SYSTEM SET search_path TO "$user", public, tokenizer_catalog'
+psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
+psql -U postgres -c "ALTER SYSTEM SET search_path TO \"\$user\", public, tokenizer_catalog;"
 # You need restart the PostgreSQL cluster to take effects.
 sudo systemctl restart postgresql.service   # for pg_tokenizer running with systemd
 ```
@@ -70,10 +70,9 @@ CREATE EXTENSION pg_tokenizer CASCADE;
 
 ## From ZIP package
 
-> Installation from the ZIP package requires a dependency on `GLIBC >= 2.35`, e.g:
-> - `RHEL 9` or later
+ZIP archives contain the extension library and SQL/control files without package-manager dependency metadata. Use an archive with the matching PostgreSQL major version and CPU architecture, and verify that the shared library is compatible with the target system's libc before installing. For supported EL, Debian, or Ubuntu systems, prefer the matching native RPM or `.deb` package.
 
-For systems that are not Debian based and cannot run a Docker container, please follow these steps to install:
+For systems without a matching native package that cannot run a Docker container, follow these steps to install:
 
 1. Before install, make sure that you have the necessary packages installed, including `PostgreSQL`, `pg_config`, `unzip`, `wget`.
 
@@ -104,7 +103,7 @@ pg_config --sharedir
 3. Download the zip package in [the release page](https://github.com/pgsty/pg_tokenizer/releases/latest) and extract it to a temporary directory.
 
 ```sh
-wget https://github.com/pgsty/pg_tokenizer/releases/download/0.1.1/postgresql-17-pg-tokenizer_*_x86_64-linux-gnu.zip -O pg_tokenizer.zip
+wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.0.0/postgresql-17-pg-tokenizer_1.0.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
 unzip pg_tokenizer.zip -d pg_tokenizer
 ```
 
@@ -121,8 +120,8 @@ sudo cp pg_tokenizer/pg_tokenizer.control $(pg_config --sharedir)/extension/
 5. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
 
 ```sh
-psql -U postgres -c 'ALTER SYSTEM SET shared_preload_libraries = "pg_tokenizer.so"'
-psql -U postgres -c 'ALTER SYSTEM SET search_path TO "$user", public, tokenizer_catalog'
+psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
+psql -U postgres -c "ALTER SYSTEM SET search_path TO \"\$user\", public, tokenizer_catalog;"
 # You need restart the PostgreSQL cluster to take effects.
 sudo systemctl restart postgresql.service   # for pg_tokenizer running with systemd
 ```
@@ -148,8 +147,8 @@ cargo pgrx install --sudo --release
 2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
 
 ```sh
-psql -U postgres -c 'ALTER SYSTEM SET shared_preload_libraries = "pg_tokenizer.so"'
-psql -U postgres -c 'ALTER SYSTEM SET search_path TO "$user", public, tokenizer_catalog'
+psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
+psql -U postgres -c "ALTER SYSTEM SET search_path TO \"\$user\", public, tokenizer_catalog;"
 # You need restart the PostgreSQL cluster to take effects.
 sudo systemctl restart postgresql.service   # for pg_tokenizer running with systemd
 ```
@@ -159,3 +158,32 @@ sudo systemctl restart postgresql.service   # for pg_tokenizer running with syst
 ```sql
 CREATE EXTENSION pg_tokenizer;
 ```
+
+## Upgrading to 1.0.0
+
+After installing the 1.0.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator:
+
+```sql
+ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0';
+```
+
+The upgrade path is available from 0.1.0 and 0.1.1. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
+
+### Database-owner permissions
+
+Installation and upgrade grant `pg_database_owner` USAGE/CREATE on `tokenizer_catalog`, EXECUTE on its database-local functions, SELECT/INSERT/UPDATE/DELETE on catalog and model tables, and USAGE/SELECT on their sequences. Future objects created in that schema by the installing role receive the same table/sequence/function defaults; newly created custom models also explicitly grant access. The grants follow a database ownership change.
+
+A non-superuser database owner can create/drop its own custom models, analyzers, tokenizers, stopwords, and synonyms after an administrator installs the extension. Grants do not transfer table ownership: dropping a model created by a different role still needs that object's owner or an administrator. Other application roles require explicit grants; the extension does not give PUBLIC schema access or catalog write privileges. Functions continue to execute with the caller's privileges.
+
+The cluster-wide `add_preload_model` and `remove_preload_model` functions are restricted to the extension owner and explicitly authorized administrators. `PUBLIC` and `pg_database_owner` have no EXECUTE grant on these two functions. Changes to preload files are not transactional and take effect on restart. Broken preload entries now generate WARNING messages and are skipped; repair or remove the entry before expecting that model to be preloaded.
+
+### Compatibility changes in 1.0.0
+
+- `apply_text_analyzer` is now `STABLE`, like `tokenize`: analyzer definitions are catalog data, so `IMMUTABLE` was incorrect and allowed cached plans to bypass invalidation. The upgrade refuses to run while an index, stored generated column, partition key, or extended statistics object depends on it. Replace such expressions with ordinary columns maintained by the application or a trigger, index those columns, then upgrade.
+- Lindera moves from 0.42 to 6.2. The embedded IPADIC dictionary changes from the 2007-08-01 edition to the 2025-09-20 edition, so its token IDs change; external compiled dictionaries must be rebuilt with Lindera 6. User-dictionary IDs now use `1073741824 + dictionary-local ID` instead of overlapping system-dictionary IDs. Regenerate stored Lindera token arrays and rebuild their indexes; see the [model notes](06-model.md#lindera-model).
+- A matching custom-model row with a NULL source now gets a NULL embedding, including a value supplied explicitly by the INSERT; 0.1.x left the target column unchanged. Nonmatching filtered rows retain their embedding.
+- Vocabulary writers that add tokens to a custom model serialize on a per-model advisory lock until commit; writers whose tokens already exist do not wait. `REPEATABLE READ` and `SERIALIZABLE` writers can receive SQLSTATE `40001` and must retry.
+- `PREPARE TRANSACTION` is rejected after calling a definition-changing API. Read-only use can be prepared.
+- `add_preload_model` and `remove_preload_model` are restricted to administrators, and broken preload entries are skipped with a WARNING instead of preventing startup. Before upgrading, remove preload entries for Lindera models that use external dictionaries not yet rebuilt with Lindera 6.
+- The built-in `lucene_english`, `nltk_english`, and `iso_english` stopword lists are reserved: `drop_stopwords` and `create_stopwords` refuse these names. If an earlier version replaced one of them, the upgrade prints a WARNING; copy the list to a new name and reference that name instead.
+- `pg_dump` now includes the definition tables; see [logical backups](07-limitation.md#logical-backups).

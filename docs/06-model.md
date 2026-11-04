@@ -99,7 +99,7 @@ kind = "remove_diacritical_mark"
 $$);
 ```
 
-Lindera has some builtin models, but we don't embed them in the extension directly. If you want to use them, you may need to compile the extension from source and enable `lindera-ipadic`, `lindera-ipadic-neologd`, `lindera-unidic`, `lindera-ko-dic`, `lindera-cc-cedict` features. See [installation](01-installation.md) for more details.
+The GitHub Release packages built by this repository include the IPADIC dictionary, matching the CI test configuration. Other package providers may enable different dictionaries. For source builds, select the dictionaries with `lindera-ipadic`, `lindera-ipadic-neologd`, `lindera-unidic`, `lindera-ko-dic`, or `lindera-cc-cedict`; they are not enabled by default. See [installation](01-installation.md) for more details.
 
 ```sh
 cargo pgrx install --sudo --release --features "lindera-ipadic lindera-ipadic-neologd lindera-unidic lindera-ko-dic lindera-cc-cedict"
@@ -111,6 +111,39 @@ You can build a custom model based on your own corpus easily. We provide followi
 
 - `create_custom_model`: Create a custom model only.
 - `create_custom_model_tokenizer_and_trigger`: Create a custom model, tokenizer, and trigger function. It will automatically insert embeddings into the target column.
+
+### Concurrent writes (1.0.0)
+
+Vocabulary triggers first compute missing tokens. Only rows that add vocabulary entries take a transaction-level advisory lock per model; rows using already committed tokens do not wait for that lock. After acquiring it, the trigger rechecks the missing tokens, deduplicates and sorts them. This serializes vocabulary additions across all rows and statements in a transaction, preventing the opposite token-lock order that caused concurrent batch inserts to deadlock. Ordinary tokenization reads and writes to different models can proceed independently. Keep transactions short; when writing multiple models or locking application rows, use a consistent order and retain normal deadlock/serialization retry handling.
+
+The embedding trigger refreshes its SPI snapshot after the vocabulary trigger, so at `READ COMMITTED` it can see token IDs committed by a writer it waited for. At `REPEATABLE READ` or `SERIALIZABLE`, a conflicting writer can receive SQLSTATE `40001` and must retry the whole transaction. Existing vocabulary IDs are preserved during upgrade; new IDs are internal mappings and are not guaranteed to match a separately created model.
+
+### Filtering a corpus (1.0.0)
+
+Set `filter` in the custom model's TOML configuration, or pass a seventh `filter` argument to the convenience helper:
+
+```sql
+SELECT create_custom_model('tenant_a', $$
+table = 'public.documents'
+column = 'passage'
+text_analyzer = 'text_analyzer1'
+filter = "tenant_id = 42 AND published IS TRUE"
+$$);
+
+-- Alternative: create the model, tokenizer, and embedding trigger together.
+SELECT create_custom_model_tokenizer_and_trigger(
+    tokenizer_name => 'tenant_b_tok', model_name => 'tenant_b',
+    text_analyzer_name => 'text_analyzer1', table_name => 'public.documents',
+    source_column => 'passage', target_column => 'embedding',
+    filter => 'tenant_id = 43 AND published IS TRUE'
+);
+```
+
+The predicate uses source column names without `NEW.` or `WHERE`, and is evaluated with the caller's privileges. Only `TRUE` matches; `FALSE` and `NULL` do not. Use a deterministic predicate of ordinary source columns, independent of the embedding target column; system columns such as `ctid` and volatile predicates are not supported. Provide a trusted SQL expression, with schema-qualified functions if needed; corpus selection does not replace row-level security. Empty or invalid expressions raise an error even for an empty table.
+
+The filter applies to the initial vocabulary scan, embedding backfill, and future inserts/updates. Filtered models observe every UPDATE so changing only a predicate column can bring a row into the corpus. Nonmatching rows are left untouched, including existing embeddings; when a row leaves the corpus, its old embedding and vocabulary entries remain. Apply the same predicate when querying the corpus, or clear excluded embeddings in the application. Vocabulary is append-only and is not pruned on UPDATE/DELETE. A matching row with a NULL source has a NULL embedding.
+
+Omitting `filter` (or passing SQL `NULL` to the helper) retains the whole-table behavior. Existing models and six-argument helper calls remain supported. Schema-qualified table names and quoted column names are supported; the stored table name is qualified when the model is created. Qualified names take precedence over a literal name containing a dot; use SQL double quotes (for example, `'"corpus.docs"'`) to select the latter explicitly.
 
 ### Example
 
@@ -232,3 +265,8 @@ sudo systemctl restart postgresql.service  # for pg_tokenizer running with syste
 The default preload model is `llmlingua2`. You can change it by using `add_preload_model`, `remove_preload_model` functions.
 
 Note: The pre-trained model may take a lot of memory (100MB for gemma2b, 200MB for llmlingua2). If you have a lot of models, you should consider the memory usage when you preload the model.
+
+
+Preloading is cluster-wide and its management functions require the extension owner's privileges or an explicit administrator grant. Backend cache invalidation preserves the inherited preload objects. A non-built-in preload is reused only when the current database has the same model name and exact stored configuration; it cannot substitute for a missing or different local definition. Preload failure logs a WARNING and skips that entry instead of preventing PostgreSQL startup. Preload-list file changes are not rolled back by SQL transaction rollback.
+
+Starting in 1.0.0, Lindera user-dictionary token IDs occupy a separate range beginning at `1073741824`, so they no longer overlap system-dictionary IDs. Re-tokenize persisted values and rebuild consuming indexes when using a user dictionary.

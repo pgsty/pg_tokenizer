@@ -11,7 +11,7 @@
 <br/>
 
 - `tokenizer_catalog.create_stopwords(name TEXT, config TEXT)`: Create a stopwords dictionary.
-- `tokenizer_catalog.drop_stopwords(name TEXT)`: Drop a stopwords dictionary.
+- `tokenizer_catalog.drop_stopwords(name TEXT)`: Drop a stopwords dictionary. The built-in `lucene_english`, `nltk_english`, and `iso_english` lists cannot be dropped, and `create_stopwords` rejects their names.
 
 <br/>
 
@@ -21,13 +21,13 @@
 ### Model
 
 - `tokenizer_catalog.create_custom_model(name TEXT, config TEXT)`: Create a custom model.
-- `tokenizer_catalog.create_custom_model_tokenizer_and_trigger(tokenizer_name TEXT, model_name TEXT, text_analyzer_name TEXT, table_name TEXT, source_column TEXT, target_column TEXT)`: Create a custom model tokenizer and trigger to update the target column automatically.
+- `tokenizer_catalog.create_custom_model_tokenizer_and_trigger(tokenizer_name TEXT, model_name TEXT, text_analyzer_name TEXT, table_name TEXT, source_column TEXT, target_column TEXT [, filter TEXT])`: Create a custom model tokenizer and trigger. The optional seventh argument restricts vocabulary and embedding updates; omit it or pass `NULL` to include all rows (1.0.0). Six-argument calls remain supported.
 - `tokenizer_catalog.drop_custom_model(name TEXT)`: Drop a custom model.
 
 <br/>
 
-- `tokenizer_catalog.add_preload_model(name TEXT)`: Add a model to the preload list.
-- `tokenizer_catalog.remove_preload_model(name TEXT)`: Remove a model from the preload list.
+- `tokenizer_catalog.add_preload_model(name TEXT)`: Add a model to the cluster-wide preload list (administrator only; nontransactional).
+- `tokenizer_catalog.remove_preload_model(name TEXT)`: Remove a model from the cluster-wide preload list (administrator only; nontransactional).
 - `tokenizer_catalog.list_preload_models() RETURNS TEXT[]`: List all preload models.
 
 <br/>
@@ -45,6 +45,8 @@
 - `tokenizer_catalog.create_tokenizer(name TEXT, config TEXT)`: Create a tokenizer.
 - `tokenizer_catalog.drop_tokenizer(name TEXT)`: Drop a tokenizer.
 - `tokenizer_catalog.tokenize(text TEXT, tokenizer_name TEXT) RETURNS INT[]`: Tokenize a text.
+- `tokenizer_catalog.analyze_to_tsvector(text TEXT, text_analyzer_name TEXT) RETURNS TSVECTOR`: Convert the analyzer's string tokens to native lexemes with positions (1.0.0).
+- `tokenizer_catalog.tokenize_to_tsvector(text TEXT, tokenizer_name TEXT) RETURNS TSVECTOR`: Convert model token IDs to decimal lexemes with positions (1.0.0). Use the same tokenizer for documents and queries; see [native full-text search](04-usage.md#native-postgresql-full-text-search).
 
 
 ## Configuration
@@ -91,7 +93,7 @@ You can choose only one of the above options for each character filter.
 | stemmer               | String      | Stemmer, see [Supported values for `stemmer`](#supported-values-for-stemmer)                                                                                                        |
 | stopwords             | String      | Stopwords name, builtin: `lucene_english`, `nltk_english`, `iso_english`                                                                                                            |
 | synonym               | String      | Synonym name                                                                                                                                                                        |
-| pg_dict               | String      | Using [postgres text search dictionary](https://www.postgresql.org/docs/current/textsearch-dictionaries.html). We currently support all dictionaries except `Thesaurus Dictionary`. |
+| pg_dict               | String      | Using [postgres text search dictionary](https://www.postgresql.org/docs/current/textsearch-dictionaries.html). Each token is looked up on its own, as `ts_lexize` does; a thesaurus applies only single-word entries. |
 | ngram                 | Table       | N-gram tokenizer, see [Options for `ngram`](#options-for-ngram)                                                                                                                     |
 
 You can choose only one of the above options for each token filter.
@@ -107,6 +109,8 @@ arabic, armenian, basque, catalan, danish, dutch, english_porter, english_porter
 | max_gram          | Integer | Maximum n-gram size, range: `1..=255`, default: `2`      |
 | min_gram          | Integer | Minimum n-gram size, range: `1..=255`, default: `1`      |
 | preserve_original | Boolean | Whether to preserve the original token, default: `false` |
+
+Lengths count Unicode characters, not bytes. A token shorter than `min_gram` produces no n-grams, unless `preserve_original` keeps the token itself.
 
 ### Options for `tokenizer`
 
@@ -126,9 +130,10 @@ arabic, armenian, basque, catalan, danish, dutch, english_porter, english_porter
 
 | Key           | Type   | Description         |
 | ------------- | ------ | ------------------- |
-| table         | String | Table name.         |
+| table         | String | Table name, optionally schema-qualified. |
 | column        | String | Column name.        |
 | text_analyzer | String | Text analyzer name. |
+| filter        | String | Optional SQL Boolean expression over source columns, without `WHERE`. Default: all rows (1.0.0). |
 
 ### Options for `lindera model`
 

@@ -108,7 +108,7 @@ $$);
 
 -- create a tokenizer
 SELECT create_tokenizer('tokenizer1', $$
-text_analyzer = "text_analyzer1"  -- optional, you can skip this if your model can tokenize text directly
+text_analyzer = "text_analyzer1"  # optional, you can skip this if your model can tokenize text directly
 model = "model1"
 $$);
 ```
@@ -123,13 +123,47 @@ $$);
 
 -- create a tokenizer
 SELECT create_tokenizer('tokenizer1', $$
--- inlined text analyzer configuration
+# model configuration (top-level keys come before any [[table]])
+model = "model1"
+# inlined text analyzer configuration
 pre_tokenizer = "unicode_segmentation"
 [[character_filters]]
 to_lowercase = {}
 [[token_filters]]
 stopwords = "nltk_english"
--- model configuration
-model = "model1"
 $$);
 ```
+
+## Native PostgreSQL full-text search
+
+Version 1.0.0 provides two functions returning the native `tsvector` type. `analyze_to_tsvector` uses the text analyzer's string tokens as lexemes, making it useful for Jieba and custom stemmer/filter pipelines. `tokenize_to_tsvector` instead uses the model's token IDs as decimal lexemes, supporting built-in, custom, Hugging Face, and Lindera models. No model decoding or second PostgreSQL text normalization is performed.
+
+```sql
+SELECT create_text_analyzer('fts_words', $$
+pre_tokenizer = "unicode_segmentation"
+[[character_filters]]
+to_lowercase = {}
+$$);
+SELECT analyze_to_tsvector('Cat dog cat', 'fts_words');
+-- 'cat':1,3 'dog':2
+
+CREATE TABLE fts_documents (id int PRIMARY KEY, passage text, terms tsvector);
+INSERT INTO fts_documents VALUES
+    (1, 'Cat dog cat', analyze_to_tsvector('Cat dog cat', 'fts_words'));
+CREATE INDEX ON fts_documents USING gin (terms);
+SELECT id FROM fts_documents WHERE terms @@ 'cat <-> dog'::tsquery;
+
+SELECT create_tokenizer('fts_bert', 'model = "bert_base_uncased"');
+SELECT tokenize_to_tsvector('hello hello', 'fts_bert');
+-- '7592':1,2
+```
+
+Both functions preserve repeated output tokens and assign positions from the final non-empty output sequence (default weight D). Positions are **not source-text offsets**: filters can remove, expand, or reorder tokens, and model output can contain subwords. Quotes, backslashes, whitespace, and punctuation in lexemes are preserved. Empty tokens are omitted and do not create position gaps; an empty output produces an empty vector, and NULL input returns NULL.
+
+PostgreSQL's native limits apply: tokens longer than 2046 bytes are omitted, without leaving position gaps; each lexeme stores at most 256 positions, and positions above 16,383 are clamped. Long input can therefore lose term-frequency/proximity detail. See [PostgreSQL text search limits](https://www.postgresql.org/docs/current/textsearch-limitations.html).
+
+Use the same analyzer/model and lexeme representation for documents and queries. `plainto_tsquery('english', ...)` does not generate model token IDs or reproduce a custom Chinese analyzer. These functions do not add a custom text search parser or a `tsquery` builder. They are `STABLE` because definitions live in catalogs: store/update the resulting vector in a column and index that column with GIN/GiST. When an installed BM25 implementation accepts native `tsvector`, it can consume these values too; check that implementation's SQL API before migrating an existing `bm25vector` index.
+
+### Definition cache invalidation
+
+Catalog-backed analyzers, tokenizers, models, stopword dictionaries, and synonym dictionaries use backend-local in-memory caches. A successful `create_*` or `drop_*` operation invalidates the current backend immediately and publishes an invalidation epoch when its transaction commits. Other backends lazily clear their caches before the next lookup. Rollbacks, including aborted subtransactions, clear local objects without invalidating unrelated backends. Lookups follow SQL snapshots: after observing a new epoch, a backend discards possibly stale objects before a new statement or transaction. Transactions that change definitions cannot be prepared with `PREPARE TRANSACTION`. A tokenizer also refreshes references to an analyzer or model after that dependency is rebuilt; reconnecting is not required.
