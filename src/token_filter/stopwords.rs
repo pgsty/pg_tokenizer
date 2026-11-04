@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::spi_get_one;
@@ -63,21 +63,22 @@ static STOPWORDS_OBJECT_POOL: LazyLock<StopwordsObjectPool> =
     LazyLock::new(StopwordsObjectPool::default);
 
 pub fn get_stopwords_token_filter(name: &str) -> StopwordsTokenFilterPtr {
+    crate::cache::check();
     if let Some(model) = STOPWORDS_OBJECT_POOL.get(name) {
         return model.clone();
     }
 
-    match STOPWORDS_OBJECT_POOL.entry(name.to_string()) {
-        Entry::Occupied(entry) => entry.get().clone(),
-        Entry::Vacant(entry) => {
-            if let Some(object) = get_stopwords_token_filter_from_database(name) {
-                entry.insert(object.clone());
-                return object;
-            }
+    // Do not hold a map shard while loading: dependencies can call
+    // cache::check(), which may clear this map.
+    let Some(object) = get_stopwords_token_filter_from_database(name) else {
+        panic!("Stopwords not found: {}", name);
+    };
+    STOPWORDS_OBJECT_POOL.insert(name.to_string(), object.clone());
+    object
+}
 
-            panic!("Stopwords not found: {}", name);
-        }
-    }
+pub(crate) fn clear_cache() {
+    STOPWORDS_OBJECT_POOL.clear();
 }
 
 fn get_stopwords_token_filter_from_database(name: &str) -> Option<StopwordsTokenFilterPtr> {
@@ -90,8 +91,15 @@ fn get_stopwords_token_filter_from_database(name: &str) -> Option<StopwordsToken
     Some(Arc::new(stopwords))
 }
 
+// CREATE EXTENSION recreates these lists, so pg_dump does not dump them.
+// Keeping them fixed means a logical restore cannot change their contents.
+const BUILTIN_STOPWORDS: [&str; 3] = ["lucene_english", "nltk_english", "iso_english"];
+
 #[pgrx::pg_extern(volatile, parallel_safe)]
 fn create_stopwords(name: &str, config: &str) {
+    if BUILTIN_STOPWORDS.contains(&name) {
+        panic!("Stopwords name is reserved for a built-in list: {}", name);
+    }
     let stopwords = StopwordsTokenFilter::build(config);
 
     pgrx::Spi::connect_mut(|client| {
@@ -110,6 +118,7 @@ fn create_stopwords(name: &str, config: &str) {
             panic!("Stopwords already exists: {}", name);
         }
 
+        crate::cache::mark_catalog_changed();
         if STOPWORDS_OBJECT_POOL
             .insert(name.to_string(), Arc::new(stopwords))
             .is_some()
@@ -121,6 +130,9 @@ fn create_stopwords(name: &str, config: &str) {
 
 #[pgrx::pg_extern(volatile, parallel_safe)]
 fn drop_stopwords(name: &str) {
+    if BUILTIN_STOPWORDS.contains(&name) {
+        panic!("Built-in stopwords cannot be dropped: {}", name);
+    }
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
             .update(
@@ -135,6 +147,7 @@ fn drop_stopwords(name: &str) {
         }
     });
 
+    crate::cache::mark_catalog_changed();
     STOPWORDS_OBJECT_POOL.remove(name);
 }
 

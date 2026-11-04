@@ -1,0 +1,87 @@
+statement ok
+BEGIN;
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('fts_words', $$
+pre_tokenizer = "unicode_segmentation"
+[[character_filters]]
+to_lowercase = {}
+$$);
+
+query T
+SELECT tokenizer_catalog.analyze_to_tsvector('Cat dog cat', 'fts_words');
+----
+'cat':1,3 'dog':2
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('fts_raw', '');
+
+query T
+SELECT tsvector_to_array(tokenizer_catalog.analyze_to_tsvector($$a b:c\d'e$$, 'fts_raw')) = ARRAY[$$a b:c\d'e$$];
+----
+t
+
+query T
+SELECT tokenizer_catalog.analyze_to_tsvector('', 'fts_raw') = ''::tsvector;
+----
+t
+
+query T
+SELECT tokenizer_catalog.analyze_to_tsvector(NULL, 'fts_raw') IS NULL;
+----
+t
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('fts_jieba', $$[pre_tokenizer.jieba]
+mode = 'precise'
+$$);
+
+query T
+SELECT cardinality(tsvector_to_array(tokenizer_catalog.analyze_to_tsvector('数据库全文搜索', 'fts_jieba'))) > 0;
+----
+t
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('fts_bert', 'model = "bert_base_uncased"');
+
+query T
+SELECT tsvector_to_array(tokenizer_catalog.tokenize_to_tsvector('hello hello', 'fts_bert')) = ARRAY['7592'];
+----
+t
+
+query T
+SELECT positions FROM unnest(tokenizer_catalog.tokenize_to_tsvector('hello hello', 'fts_bert'));
+----
+{1,2}
+
+# Native GIN and phrase queries operate on the generated vector.
+statement ok
+CREATE TABLE fts_docs (id int, terms tsvector);
+
+statement ok
+INSERT INTO fts_docs VALUES (1, tokenizer_catalog.analyze_to_tsvector('Cat dog cat', 'fts_words')),
+(2, tokenizer_catalog.analyze_to_tsvector('dog only', 'fts_words'));
+
+statement ok
+CREATE INDEX ON fts_docs USING gin(terms);
+
+statement ok
+SET LOCAL enable_seqscan = off;
+
+query I
+SELECT id FROM fts_docs WHERE terms @@ 'cat <-> dog'::tsquery;
+----
+1
+
+query I
+SELECT cardinality(positions) FROM unnest(tokenizer_catalog.analyze_to_tsvector(repeat('cat ', 300), 'fts_words'));
+----
+256
+
+query T
+SELECT positions FROM unnest(tokenizer_catalog.analyze_to_tsvector(repeat('cat ', 16383) || 'dog', 'fts_words')) WHERE lexeme = 'dog';
+----
+{16383}
+
+statement ok
+ROLLBACK;

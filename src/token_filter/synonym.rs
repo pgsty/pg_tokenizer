@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::utils::spi_get_one;
@@ -74,21 +74,22 @@ type SynonymObjectPool = DashMap<String, SynonymTokenFilterPtr>;
 static SYNONYM_OBJECT_POOL: LazyLock<SynonymObjectPool> = LazyLock::new(SynonymObjectPool::default);
 
 pub fn get_synonym_token_filter(name: &str) -> SynonymTokenFilterPtr {
+    crate::cache::check();
     if let Some(model) = SYNONYM_OBJECT_POOL.get(name) {
         return model.clone();
     }
 
-    match SYNONYM_OBJECT_POOL.entry(name.to_string()) {
-        Entry::Occupied(entry) => entry.get().clone(),
-        Entry::Vacant(entry) => {
-            if let Some(object) = get_synonym_token_filter_from_database(name) {
-                entry.insert(object.clone());
-                return object;
-            }
+    // Do not hold a map shard while loading: dependencies can call
+    // cache::check(), which may clear this map.
+    let Some(object) = get_synonym_token_filter_from_database(name) else {
+        panic!("Synonym not found: {}", name);
+    };
+    SYNONYM_OBJECT_POOL.insert(name.to_string(), object.clone());
+    object
+}
 
-            panic!("Synonym not found: {}", name);
-        }
-    }
+pub(crate) fn clear_cache() {
+    SYNONYM_OBJECT_POOL.clear();
 }
 
 fn get_synonym_token_filter_from_database(name: &str) -> Option<SynonymTokenFilterPtr> {
@@ -121,6 +122,7 @@ fn create_synonym(name: &str, config: &str) {
             panic!("Synonym already exists: {}", name);
         }
 
+        crate::cache::mark_catalog_changed();
         if SYNONYM_OBJECT_POOL
             .insert(name.to_string(), Arc::new(synonym))
             .is_some()
@@ -146,5 +148,6 @@ fn drop_synonym(name: &str) {
         }
     });
 
+    crate::cache::mark_catalog_changed();
     SYNONYM_OBJECT_POOL.remove(name);
 }

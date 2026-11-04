@@ -2,16 +2,18 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
+mod cache;
 pub mod character_filter;
 pub mod model;
 pub mod pre_tokenizer;
 pub mod text_analyzer;
 pub mod token_filter;
 pub mod tokenizer;
+pub mod tsvector;
 pub mod utils;
 
 ::pgrx::pg_module_magic!();
@@ -35,6 +37,7 @@ extern "C-unwind" fn _PG_init() {
         pgrx::error!("pg_tokenizer must be loaded via shared_preload_libraries.");
     }
 
+    cache::init();
     pre_tokenizer::init();
     model::init();
 }
@@ -50,3 +53,5 @@ pub mod pg_test {
         vec![r#"search_path = '"$user", public, tokenizer_catalog'"#]
     }
 }
+
+pgrx::extension_sql_file!("sql/privileges.sql", name = "catalog_privileges", finalize);

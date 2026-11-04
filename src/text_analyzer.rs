@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
@@ -100,21 +100,22 @@ static TEXT_ANALYZER_OBJECT_POOL: LazyLock<TextAnalyzerObjectPool> =
     LazyLock::new(TextAnalyzerObjectPool::default);
 
 pub fn get_text_analyzer(name: &str) -> TextAnalyzerPtr {
+    crate::cache::check();
     if let Some(model) = TEXT_ANALYZER_OBJECT_POOL.get(name) {
         return model.clone();
     }
 
-    match TEXT_ANALYZER_OBJECT_POOL.entry(name.to_string()) {
-        Entry::Occupied(entry) => entry.get().clone(),
-        Entry::Vacant(entry) => {
-            if let Some(object) = get_text_analyzer_from_database(name) {
-                entry.insert(object.clone());
-                return object;
-            }
+    // Do not hold a map shard while loading: dependencies can call
+    // cache::check(), which may clear this map.
+    let Some(object) = get_text_analyzer_from_database(name) else {
+        panic!("TextAnalyzer not found: {}", name);
+    };
+    TEXT_ANALYZER_OBJECT_POOL.insert(name.to_string(), object.clone());
+    object
+}
 
-            panic!("TextAnalyzer not found: {}", name);
-        }
-    }
+pub(crate) fn clear_cache() {
+    TEXT_ANALYZER_OBJECT_POOL.clear();
 }
 
 fn get_text_analyzer_from_database(name: &str) -> Option<TextAnalyzerPtr> {
@@ -151,6 +152,7 @@ fn create_text_analyzer(name: &str, config: &str) {
             panic!("Text analyzer already exists: {}", name);
         }
 
+        crate::cache::mark_catalog_changed();
         TEXT_ANALYZER_OBJECT_POOL.insert(name.to_string(), Arc::new(text_analyzer));
     });
 }
@@ -171,10 +173,11 @@ fn drop_text_analyzer(name: &str) {
         }
     });
 
+    crate::cache::mark_catalog_changed();
     TEXT_ANALYZER_OBJECT_POOL.remove(name);
 }
 
-#[pgrx::pg_extern(immutable, parallel_safe)]
+#[pgrx::pg_extern(stable, parallel_safe)]
 fn apply_text_analyzer(text: &str, text_analyzer_name: &str) -> Vec<String> {
     let text_analyzer = get_text_analyzer(text_analyzer_name);
     text_analyzer.apply(text)

@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -39,13 +39,33 @@ impl TokenFilter for PgDictTokenFilter {
                 .as_mut()
                 .unwrap();
 
-            let res = pgrx::pg_sys::FunctionCall3Coll(
-                &raw mut dict.lexize,
-                pgrx::pg_sys::InvalidOid,
-                dict.dictData.into(),
-                token.as_ptr().into(),
-                <i32 as Into<_>>::into(token.len().try_into().unwrap()),
-            );
+            let length: i32 = token.len().try_into().unwrap();
+            // Follow ts_lexize(): pass the DictSubState argument that
+            // dictionaries such as thesaurus require, and, when one asks for
+            // the next token, report the end of input instead.
+            let mut state = pgrx::pg_sys::DictSubState {
+                isend: false,
+                getnext: false,
+                private_state: std::ptr::null_mut(),
+            };
+            let mut lexize = |state: *mut pgrx::pg_sys::DictSubState| {
+                pgrx::pg_sys::FunctionCall4Coll(
+                    &raw mut dict.lexize,
+                    pgrx::pg_sys::InvalidOid,
+                    dict.dictData.into(),
+                    token.as_ptr().into(),
+                    length.into(),
+                    state.into(),
+                )
+            };
+            let mut res = lexize(&raw mut state);
+            if state.getnext {
+                state.isend = true;
+                let last = lexize(&raw mut state);
+                if !last.is_null() {
+                    res = last;
+                }
+            }
             if res.is_null() {
                 // not recognized
                 return vec![token];

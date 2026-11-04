@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -15,7 +15,7 @@ use std::sync::{Arc, LazyLock};
 
 use builtin::{get_builtin_model, is_builtin_model};
 use custom::{CustomModel, CustomModelConfig};
-use dashmap::{DashMap, Entry};
+use dashmap::DashMap;
 use huggingface::{HuggingFaceConfig, HuggingFaceModel};
 use lindera::{LinderaConfig, LinderaModel};
 use serde::{Deserialize, Serialize};
@@ -58,6 +58,10 @@ enum ModelConfig {
 type ModelObjectPool = DashMap<String, TokenizerModelPtr>;
 pub(super) static MODEL_OBJECT_POOL: LazyLock<ModelObjectPool> =
     LazyLock::new(ModelObjectPool::default);
+// Built by the postmaster from preload files and inherited by every backend.
+// Reused only when the current database's catalog has the same definition.
+static PRELOADED_MODELS: LazyLock<DashMap<String, (String, TokenizerModelPtr)>> =
+    LazyLock::new(DashMap::default);
 
 pgrx::extension_sql!(
     r#"
@@ -71,31 +75,36 @@ CREATE TABLE tokenizer_catalog.model (
 
 pub fn get_model(name: &str) -> TokenizerModelPtr {
     validate_model_name(name).unwrap();
+    crate::cache::check();
     if let Some(model) = MODEL_OBJECT_POOL.get(name) {
         return model.clone();
     }
 
-    match MODEL_OBJECT_POOL.entry(name.to_string()) {
-        Entry::Occupied(entry) => entry.get().clone(),
-        Entry::Vacant(entry) => {
-            if let Some(object) = get_builtin_model(name) {
-                entry.insert(object.clone());
-                return object;
-            }
-
-            if let Some(object) = get_model_from_database(name) {
-                entry.insert(object.clone());
-                return object;
-            }
-
-            panic!("Model not found: {}", name);
+    let object = match get_builtin_model(name) {
+        Some(object) => object,
+        None => {
+            get_model_from_database(name).unwrap_or_else(|| panic!("Model not found: {}", name))
         }
-    }
+    };
+    MODEL_OBJECT_POOL.insert(name.to_string(), object.clone());
+    object
+}
+
+pub(super) fn clear_cache() {
+    MODEL_OBJECT_POOL.clear();
 }
 
 fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {
-    let config = get_model_config(name)?;
-    Some(build_model(name, &config))
+    let config: &str = spi_get_one(
+        "SELECT config FROM tokenizer_catalog.model WHERE name = $1",
+        &[name.into()],
+    )?;
+    if let Some(preloaded) = PRELOADED_MODELS.get(name) {
+        if preloaded.0 == config {
+            return Some(preloaded.1.clone());
+        }
+    }
+    Some(build_model(name, &serde_json::from_str(config).unwrap()))
 }
 
 fn get_model_config(name: &str) -> Option<ModelConfig> {
@@ -193,29 +202,55 @@ pub fn init() {
             Ok(_) => {}
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => {
-                pgrx::error!("Failed to create directory: {}", e);
+                pgrx::warning!("pg_tokenizer: cannot create preload directory: {}", e);
+                return;
             }
         }
         for name in builtin::PRELOAD_MODELS {
             let path = dir_path.join(name);
-            std::fs::write(&path, "").unwrap();
+            if let Err(e) = std::fs::write(&path, "") {
+                pgrx::warning!("pg_tokenizer: cannot save default preload {}: {}", name, e);
+            }
         }
     }
 
-    for entry in std::fs::read_dir(dir_path).unwrap() {
-        let entry = entry.unwrap();
-        let name = entry.file_name().into_string().unwrap();
-        validate_model_name(&name).unwrap();
-
-        if let Some(object) = get_builtin_model(&name) {
-            MODEL_OBJECT_POOL.insert(name, object);
-            continue;
+    let entries = match std::fs::read_dir(dir_path) {
+        Ok(entries) => entries,
+        Err(e) => {
+            pgrx::warning!("pg_tokenizer: cannot read preload directory: {}", e);
+            return;
         }
-
-        let content = std::fs::read_to_string(entry.path()).unwrap();
-        let config: ModelConfig = serde_json::from_str(&content).unwrap();
-        let object = build_model(&name, &config);
-        MODEL_OBJECT_POOL.insert(name, object);
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                pgrx::warning!("pg_tokenizer: cannot read preload entry: {}", e);
+                continue;
+            }
+        };
+        // All per-entry validation belongs inside the recovery boundary.
+        // Preloading is an optimization; a stale entry must not stop startup.
+        let loaded = std::panic::catch_unwind(|| {
+            let name = entry
+                .file_name()
+                .into_string()
+                .expect("invalid preload name");
+            validate_model_name(&name).unwrap();
+            if get_builtin_model(&name).is_some() {
+                return;
+            }
+            let content = std::fs::read_to_string(entry.path()).unwrap();
+            let config: ModelConfig = serde_json::from_str(&content).unwrap();
+            let object = build_model(&name, &config);
+            PRELOADED_MODELS.insert(name, (content, object));
+        });
+        if loaded.is_err() {
+            pgrx::warning!(
+                "pg_tokenizer: skipping preload model that failed to load: {}",
+                entry.file_name().to_string_lossy()
+            );
+        }
     }
 }
 

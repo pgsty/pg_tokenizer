@@ -1,0 +1,126 @@
+statement ok
+BEGIN;
+
+statement ok
+CREATE SCHEMA filter_corpus;
+
+statement ok
+CREATE TABLE filter_corpus.documents (id int, tenant text, body text, embedding int[]);
+
+statement ok
+INSERT INTO filter_corpus.documents VALUES
+(1, 'O''Reilly', 'zebra alpha alpha', NULL),
+(2, 'other', 'hidden', ARRAY[-1]),
+(3, NULL, 'excluded', NULL);
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('filter_analyzer', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    tokenizer_name => 'filter_tokenizer', model_name => 'filtered',
+    text_analyzer_name => 'filter_analyzer', table_name => 'filter_corpus.documents',
+    source_column => 'body', target_column => 'embedding', filter => $$tenant = 'O''Reilly'$$);
+
+query T
+SELECT array_agg(token ORDER BY id) FROM tokenizer_catalog.model_filtered;
+----
+{alpha,zebra}
+
+query T
+SELECT embedding FROM filter_corpus.documents ORDER BY id;
+----
+{2,1,1}
+{-1}
+NULL
+
+# A predicate-column-only update must learn tokens and generate an embedding.
+statement ok
+UPDATE filter_corpus.documents SET tenant = 'O''Reilly' WHERE id = 2;
+
+query T
+SELECT embedding = tokenizer_catalog.tokenize(body, 'filter_tokenizer') FROM filter_corpus.documents WHERE id = 2;
+----
+t
+
+# Leaving the filter preserves the embedding; vocabulary is append-only.
+statement ok
+UPDATE filter_corpus.documents SET tenant = 'other', body = 'outside' WHERE id = 2;
+
+query I
+SELECT count(*) FROM tokenizer_catalog.model_filtered WHERE token IN ('outside', 'excluded');
+----
+0
+
+query I
+SELECT cardinality(embedding) FROM filter_corpus.documents WHERE id = 2;
+----
+1
+
+statement ok
+UPDATE filter_corpus.documents SET body = NULL WHERE id = 1;
+
+query T
+SELECT embedding IS NULL FROM filter_corpus.documents WHERE id = 1;
+----
+t
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model('direct_filter', $$
+table = 'filter_corpus.documents'
+column = 'body'
+text_analyzer = 'filter_analyzer'
+filter = "tenant = 'other'"
+$$);
+
+query T
+SELECT array_agg(token ORDER BY token) FROM tokenizer_catalog.model_direct_filter;
+----
+{outside}
+
+statement ok
+INSERT INTO filter_corpus.documents (id, tenant, body) VALUES (4, 'other', 'newword'), (5, NULL, 'never');
+
+query T
+SELECT array_agg(token ORDER BY token) FROM tokenizer_catalog.model_direct_filter;
+----
+{newword,outside}
+
+# Schema qualification survives a search_path change, including on drop.
+statement ok
+SET LOCAL search_path = pg_catalog;
+
+statement ok
+SELECT tokenizer_catalog.drop_custom_model('direct_filter');
+
+statement ok
+SELECT tokenizer_catalog.drop_custom_model('filtered');
+
+statement ok
+ROLLBACK;
+
+# Quoting must survive SQL, TOML, and trigger arguments.
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE "O'Reilly docs" ("$col$body'" text, "output'" int[], tenant int);
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('analyzer''quoted', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    'tokenizer''quoted', 'quoted_model', 'analyzer''quoted', 'O''Reilly docs', '$col$body''', 'output''', 'tenant = 1');
+
+statement ok
+INSERT INTO "O'Reilly docs" VALUES ('hello hello', NULL, 1), ('excluded', NULL, 2);
+
+query T
+SELECT "output'" FROM "O'Reilly docs" ORDER BY tenant;
+----
+{1,1}
+NULL
+
+statement ok
+ROLLBACK;

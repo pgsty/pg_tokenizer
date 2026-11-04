@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -55,4 +55,9 @@ pub fn get_token_filter(config: TokenFilterConfig) -> TokenFilterPtr {
         TokenFilterConfig::Synonym(name) => synonym::get_synonym_token_filter(&name),
         TokenFilterConfig::NGram(config) => Arc::new(Ngram::new(config)),
     }
+}
+
+pub(crate) fn clear_caches() {
+    stopwords::clear_cache();
+    synonym::clear_cache();
 }

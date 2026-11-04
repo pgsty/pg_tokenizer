@@ -2,14 +2,14 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
 use std::sync::Arc;
 
 use anyhow::Context;
-use lindera::dictionary::DictionaryKind;
+use lindera::dictionary::{DictionaryKind, WordId};
 use lindera_analysis::tokenizer::{Tokenizer, TokenizerConfig};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -80,11 +80,31 @@ impl TokenizerModel for LinderaModel {
             .tokenize(&token)
             .unwrap()
             .into_iter()
-            .filter(|t| !t.word_id.is_unknown())
-            .map(|t| t.word_id.id())
-            .filter(|id| *id != u32::MAX)
+            .filter_map(|t| token_id(t.word_id))
             .collect()
     }
+}
+
+// Lindera IDs are local to each dictionary. Preserve existing system IDs and
+// reserve bit 30 for user entries, keeping both namespaces within SQL INT.
+const USER_DICTIONARY_ID_BASE: u32 = 1 << 30;
+
+fn token_id(word: WordId) -> Option<u32> {
+    if word.is_unknown() || word.id() == u32::MAX {
+        return None;
+    }
+    assert!(
+        word.id() < USER_DICTIONARY_ID_BASE,
+        "Lindera dictionary has too many entries for pg_tokenizer token IDs"
+    );
+    Some(
+        word.id()
+            + if word.is_system() {
+                0
+            } else {
+                USER_DICTIONARY_ID_BASE
+            },
+    )
 }
 
 #[pgrx::pg_extern(volatile, parallel_safe)]
@@ -109,6 +129,7 @@ fn create_lindera_model(name: &str, config: &str) {
             panic!("Model already exists: {}", name);
         }
 
+        crate::cache::mark_catalog_changed();
         MODEL_OBJECT_POOL.insert(name.to_string(), Arc::new(lindera_model));
     });
 }
@@ -131,6 +152,7 @@ fn drop_lindera_model(name: &str) {
         }
     });
 
+    crate::cache::mark_catalog_changed();
     MODEL_OBJECT_POOL.remove(name);
 }
 
@@ -139,6 +161,30 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[cfg(feature = "lindera-ipadic")]
+    #[test]
+    fn user_dictionary_ids_do_not_collide_with_system_dictionary() {
+        let config = LinderaConfig {
+            inner: json!({"segmenter": {
+                "dictionary": "embedded://ipadic",
+                "user_dictionary": concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ipadic-user.csv")
+            }}),
+        };
+        let model = LinderaModel::new(&config);
+        let words = model.tokenizer.tokenize("東京スカイツリー").unwrap();
+        assert_eq!(words.len(), 1);
+        let user = words[0].word_id;
+        assert!(!user.is_system() && !user.is_unknown());
+        let system = WordId::new(Default::default(), user.id());
+        assert_ne!(token_id(user), token_id(system));
+        assert_eq!(
+            model.apply("東京スカイツリー".into()),
+            [USER_DICTIONARY_ID_BASE]
+        );
+        assert_eq!(model.apply("関西国際空港限定".into()), [372982, 374178]);
+    }
+
+    #[cfg(feature = "lindera-ipadic")]
     #[test]
     fn legacy_dictionary_config_preserves_filters() {
         let config: LinderaConfig = toml::from_str(

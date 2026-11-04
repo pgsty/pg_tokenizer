@@ -19,3 +19,33 @@ For each test, it'll rollback the transaction after the test, so you don't need 
 statement ok
 COMMIT;
 ```
+
+## Concurrency, roles, and upgrades
+
+Run the Python tests against a disposable cluster with `pg_tokenizer` built with `lindera-ipadic`, preloaded, and
+both the current install SQL and historical `sql/install/pg_tokenizer--0.1.[01].sql` files
+installed in its extension directory:
+
+```shell
+python3 -m venv .venv
+.venv/bin/pip install 'psycopg[binary]'
+PG_TOKENIZER_TEST_DSN='host=localhost user=postgres dbname=postgres' \
+  .venv/bin/python tests/test_integration.py
+```
+
+The administrator connection must be allowed to create databases and roles. Tests
+create uniquely named databases/roles and remove them afterward. They verify
+opposite transaction token orders, concurrent multi-row inserts, complete stored
+embeddings after waiting, lock isolation between models, strong-isolation retries, rollback, non-superuser
+database owners, unrelated-role denial, ownership changes, and the 0.1.0/0.1.1 to 1.0.0 upgrades
+without rebuilding vocabularies or dropping dependent functions. They also check legacy three-argument triggers, fresh/upgrade catalog equivalence, sequence-name collisions, and qualified names shadowed by literal names containing dots. The regular SQL
+suite covers filtering, identifier/literal quoting, predicate-only updates, NULL
+sources, tsvector escaping, positions, limits, and a native GIN phrase query.
+
+Restart the test server after replacing the shared library; it is preloaded.
+
+Set `max_prepared_transactions = 10` on the disposable test cluster to exercise two-phase transaction checks. The regressions also cover concurrent invalidation, old snapshots within and across transactions, multi-statement protocol messages, parallel workers, prepared read-only transactions, trigger overload attacks, preload ACLs, known-token writers, missing source tables, long lexemes, analyzer prepared plans, upgrade refusal for `IMMUTABLE`-only dependents, and a `pg_dump`/restore round trip (requires `pg_dump` and `psql` on PATH). Run the suite with an outer timeout: the original cache deadlock cannot be interrupted by a server statement timeout.
+
+For a native package without embedded IPADIC, set `PG_TOKENIZER_TEST_LINDERA_DICTIONARY` to an IPADIC dictionary directory compiled with Lindera 6. The default is `embedded://ipadic` for GitHub/source builds with that feature.
+
+Run `python tests/test_preload.py` as a non-root OS user with `pg_config` on PATH. It creates and stops its own disposable cluster, checks startup with malformed/stale preload entries, and verifies same-name model isolation between databases. Set `PG_TOKENIZER_TEST_LIBRARY` to an absolute library path and `PG_TOKENIZER_TEST_SHAREDIR` to a staged share directory when testing an uninstalled PG18+ package.

@@ -2,19 +2,19 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
 use std::{collections::HashMap, ffi::CStr, sync::Arc};
 
 use pgrx::{
-    pg_sys::{panic::ErrorReportable, AsPgCStr},
+    pg_sys::panic::ErrorReportable,
     prelude::PgHeapTuple,
+    spi::{quote_identifier, quote_literal},
     WhoAllocated,
 };
 use serde::{Deserialize, Serialize};
-use validator::{Validate, ValidationError};
 
 use crate::{text_analyzer::get_text_analyzer, utils::spi_get_one};
 
@@ -75,21 +75,62 @@ impl TokenizerModel for CustomModel {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[validate(schema(function = "CustomModelConfig::validate_column_name"))]
 pub struct CustomModelConfig {
     table: String,
     column: String,
     text_analyzer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    filter: Option<String>,
 }
 
-impl CustomModelConfig {
-    fn validate_column_name(&self) -> Result<(), ValidationError> {
-        if self.column.contains("$col$") {
-            return Err(ValidationError::new("column name cannot contain '$col$'"));
+// Store a qualified name so triggers and drops do not depend on a later search_path.
+fn resolve_table(table: &str) -> String {
+    try_resolve_table(table).unwrap_or_else(|| panic!("Table not found: {table}"))
+}
+
+fn try_resolve_table(table: &str) -> Option<String> {
+    use pgrx::{pg_sys, IntoDatum, PgTryBuilder};
+
+    // Parse identifiers without executing SQL. Only suppress syntax errors from
+    // this pure parser, to retain legacy literal names such as O'Reilly docs.
+    let identifiers = PgTryBuilder::new(|| unsafe {
+        pgrx::direct_function_call::<Vec<String>>(
+            pg_sys::parse_ident,
+            &[table.into_datum(), true.into_datum()],
+        )
+    })
+    .catch_when(
+        pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+        |_| None,
+    )
+    .execute();
+    let lookup = match identifiers {
+        None => "pg_catalog.to_regclass(pg_catalog.quote_ident($1))",
+        Some(parts) if parts.len() > 1 || table.trim_start().starts_with('"') => {
+            "coalesce(pg_catalog.to_regclass($1), pg_catalog.to_regclass(pg_catalog.quote_ident($1)))"
         }
-        Ok(())
+        Some(_) => {
+            "coalesce(pg_catalog.to_regclass(pg_catalog.quote_ident($1)), pg_catalog.to_regclass($1))"
+        }
+    };
+    spi_get_one(
+        &format!(
+            "SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) FROM pg_catalog.pg_class c \
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+         WHERE c.oid = {lookup}"
+        ),
+        &[table.into()],
+    )
+}
+
+fn update_event(config: &CustomModelConfig) -> String {
+    if config.filter.is_some() {
+        // A predicate column can change without the source text changing.
+        "UPDATE".to_string()
+    } else {
+        format!("UPDATE OF {}", quote_identifier(&config.column))
     }
 }
 
@@ -99,12 +140,13 @@ impl CustomModelConfig {
 // 4. insert model into model table
 // 5. insert model into model object pool
 // do 3 4 5 in a transaction, if any step fails, rollback
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_custom_model(name: &str, config: &str) {
     validate_new_model_name(name).unwrap();
 
-    let config: CustomModelConfig = toml::from_str(config).unwrap();
-    let table = quote_identifier(&config.table);
+    let mut config: CustomModelConfig = toml::from_str(config).unwrap();
+    config.table = resolve_table(&config.table);
+    let table = &config.table;
     let column = quote_identifier(&config.column);
 
     get_text_analyzer(&config.text_analyzer);
@@ -118,38 +160,82 @@ fn create_custom_model(name: &str, config: &str) {
         "#,
         name
     );
+    let filter = config.filter.as_deref().unwrap_or("true");
+    let filter_arg = config
+        .filter
+        .as_deref()
+        .map(|filter| format!(", {}", quote_literal(filter)))
+        .unwrap_or_default();
+    let analyzer = quote_literal(&config.text_analyzer);
     let create_trigger = format!(
         r#"
-        CREATE TRIGGER "model_{}_trigger"
-        BEFORE INSERT OR UPDATE OF {}
-        ON {}
+        CREATE TRIGGER "model_{name}_trigger"
+        BEFORE INSERT OR {event} ON {table}
         FOR EACH ROW
-        EXECUTE FUNCTION tokenizer_catalog.custom_model_insert_trigger('{}', $col${}$col$, {});
+        EXECUTE FUNCTION tokenizer_catalog.custom_model_insert_trigger({model}, {column_arg}, {analyzer}{filter_arg});
         "#,
-        name, column, table, name, config.column, config.text_analyzer
+        event = update_event(&config),
+        model = quote_literal(name),
+        column_arg = quote_literal(&config.column),
     );
     let insert_existing_tokens = format!(
         r#"
         WITH tokens AS (
-            SELECT unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model({}, '{}')) AS token
-            FROM {}
+            SELECT pg_catalog.unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model(
+                ({column})::pg_catalog.text, {analyzer}::pg_catalog.text)) AS token
+            FROM {table} AS document WHERE ({filter})
         )
-        INSERT INTO tokenizer_catalog."model_{}" (token)
-        SELECT DISTINCT token
-        FROM tokens
+        INSERT INTO tokenizer_catalog."model_{name}" (token)
+        SELECT DISTINCT token COLLATE "C" FROM tokens
+        ORDER BY token COLLATE "C"
         ON CONFLICT (token) DO NOTHING;
         "#,
-        column, config.text_analyzer, table, name
+    );
+    let grant_model = format!(
+        r#"
+        GRANT SELECT, INSERT, UPDATE, DELETE ON tokenizer_catalog."model_{name}" TO pg_database_owner;
+        "#,
     );
     let insert_model = r#"
         INSERT INTO tokenizer_catalog.model (name, config) VALUES ($1, $2)
         ON CONFLICT (name) DO NOTHING RETURNING 1
         "#;
     let custom_model = CustomModel::new(name, &config);
-    let config_str = serde_json::to_string(&ModelConfig::Custom(config)).unwrap();
+    let config_str = serde_json::to_string(&ModelConfig::Custom(config.clone())).unwrap();
 
     pgrx::Spi::connect_mut(|client| {
+        // Use the trigger's composite-row scope even when the corpus is empty.
+        // System columns/table-qualified names cannot work against NEW later.
+        client
+            .select(
+                &format!(
+                    "SELECT ({filter}) IS TRUE FROM (SELECT (NULL::{table}).*) AS document LIMIT 0"
+                ),
+                None,
+                &[],
+            )
+            .unwrap();
         client.update(&create_word_table, None, &[]).unwrap();
+        client.update(&grant_model, None, &[]).unwrap();
+        // PostgreSQL may suffix the identity sequence name after a collision.
+        let sequence: String = client
+            .select(
+                "SELECT pg_catalog.pg_get_serial_sequence($1, 'id')",
+                Some(1),
+                &[format!("tokenizer_catalog.\"model_{name}\"").into()],
+            )
+            .unwrap()
+            .first()
+            .get_one()
+            .unwrap()
+            .expect("model identity sequence is missing");
+        client
+            .update(
+                &format!("GRANT USAGE, SELECT ON SEQUENCE {sequence} TO pg_database_owner"),
+                None,
+                &[],
+            )
+            .unwrap();
         client.update(&create_trigger, None, &[]).unwrap();
         client.update(&insert_existing_tokens, None, &[]).unwrap();
 
@@ -160,11 +246,12 @@ fn create_custom_model(name: &str, config: &str) {
             panic!("Model already exists: {}", name);
         }
 
+        crate::cache::mark_catalog_changed();
         MODEL_OBJECT_POOL.insert(name.to_string(), Arc::new(custom_model));
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_custom_model(name: &str) {
     if let Err(e) = validate_new_model_name(name) {
         pgrx::warning!("Invalid model name: {}, Details: {}", name, e);
@@ -177,22 +264,21 @@ fn drop_custom_model(name: &str) {
     let ModelConfig::Custom(config) = &config else {
         panic!("Model is not a custom model: {}", name);
     };
-    let table_name = quote_identifier(&config.table);
-
-    let drop_model_trigger = format!(
-        r#"DROP TRIGGER IF EXISTS "model_{}_trigger" ON {}"#,
-        name, table_name
-    );
-    let drop_insert_trigger = format!(
-        r#"DROP TRIGGER IF EXISTS "model_{}_trigger_insert" ON {}"#,
-        name, table_name
-    );
+    // A dropped source table has already taken the triggers with it.
+    let table_name = try_resolve_table(&config.table);
+    let drop_triggers = table_name.map(|table| {
+        format!(
+            r#"DROP TRIGGER IF EXISTS "model_{name}_trigger" ON {table};
+            DROP TRIGGER IF EXISTS "model_{name}_trigger_insert" ON {table}"#
+        )
+    });
     let drop_table = format!(r#"DROP TABLE IF EXISTS tokenizer_catalog."model_{}""#, name);
     let delete_model = r#"DELETE FROM tokenizer_catalog.model WHERE name = $1 RETURNING 1"#;
 
     pgrx::Spi::connect_mut(|client| {
-        client.update(&drop_model_trigger, None, &[]).unwrap();
-        client.update(&drop_insert_trigger, None, &[]).unwrap();
+        if let Some(drop_triggers) = &drop_triggers {
+            client.update(drop_triggers, None, &[]).unwrap();
+        }
         client.update(&drop_table, None, &[]).unwrap();
         let tuptable = client.update(delete_model, None, &[name.into()]).unwrap();
 
@@ -201,6 +287,7 @@ fn drop_custom_model(name: &str) {
         }
     });
 
+    crate::cache::mark_catalog_changed();
     MODEL_OBJECT_POOL.remove(name);
 }
 
@@ -228,56 +315,63 @@ fn apply_text_analyzer_for_custom_model(text: &str, text_analyzer_name: &str) ->
     results
 }
 
-pgrx::extension_sql!(
-    r#"
-CREATE FUNCTION custom_model_insert_trigger()
-RETURNS TRIGGER AS $$
-DECLARE
-    tokenizer_name TEXT := TG_ARGV[0];
-    target_column TEXT := TG_ARGV[1];
-    text_analyzer TEXT := TG_ARGV[2];
-BEGIN
-    EXECUTE format('
-    WITH 
-    new_tokens AS (
-        SELECT unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model($1.%I, %L)) AS token
-    ),
-    to_insert AS (
-        SELECT token FROM new_tokens
-        WHERE NOT EXISTS (
-            SELECT 1 FROM tokenizer_catalog."model_%s" WHERE token = new_tokens.token
-        )
-    )
-    INSERT INTO tokenizer_catalog."model_%s" (token) SELECT token FROM to_insert ON CONFLICT (token) DO NOTHING', target_column, text_analyzer, tokenizer_name, tokenizer_name) USING NEW;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-    "#,
-    name = "custom_model_insert_trigger"
-);
+pgrx::extension_sql_file!("../sql/custom_model.sql", name = "custom_model_triggers");
 
-pgrx::extension_sql!(
-    r#"
-CREATE FUNCTION create_custom_model_tokenizer_and_trigger(
-tokenizer_name TEXT, model_name TEXT, text_analyzer_name TEXT, table_name TEXT, source_column TEXT, target_column TEXT)
-RETURNS VOID AS $body$
-BEGIN
-    EXECUTE format('SELECT tokenizer_catalog.create_custom_model(%L, $$
-        table = %L
-        column = %L
-        text_analyzer = %L
-        $$)', model_name, table_name, source_column, text_analyzer_name);
-    EXECUTE format('SELECT tokenizer_catalog.create_tokenizer(%L, $$
-        text_analyzer = %L
-        model = %L
-        $$)', tokenizer_name, text_analyzer_name, model_name);
-    EXECUTE format('UPDATE %I SET %I = tokenizer_catalog.tokenize(%I, %L)', table_name, target_column, source_column, tokenizer_name);
-    EXECUTE format('CREATE TRIGGER "model_%s_trigger_insert" BEFORE INSERT OR UPDATE OF %I ON %I FOR EACH ROW EXECUTE FUNCTION tokenizer_catalog.custom_model_tokenizer_set_target_column_trigger(%L, %I, %I)', model_name, source_column, table_name, tokenizer_name, source_column, target_column);
-END;
-$body$ LANGUAGE plpgsql;
-    "#,
-    name = "create_custom_model_tokenizer_and_trigger"
-);
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
+fn create_custom_model_tokenizer_and_trigger(
+    tokenizer_name: &str,
+    model_name: &str,
+    text_analyzer_name: &str,
+    table_name: &str,
+    source_column: &str,
+    target_column: &str,
+    filter: Option<&str>,
+) {
+    let config = CustomModelConfig {
+        table: resolve_table(table_name),
+        column: source_column.to_string(),
+        text_analyzer: text_analyzer_name.to_string(),
+        filter: filter.map(str::to_string),
+    };
+    create_custom_model(model_name, &toml::to_string(&config).unwrap());
+    let tokenizer_config = toml::to_string(&std::collections::BTreeMap::from([
+        ("text_analyzer", text_analyzer_name),
+        ("model", model_name),
+    ]))
+    .unwrap();
+    let predicate = filter.unwrap_or("true");
+    pgrx::Spi::connect_mut(|client| {
+        client
+            .update(
+                "SELECT tokenizer_catalog.create_tokenizer($1, $2)",
+                None,
+                &[tokenizer_name.into(), tokenizer_config.into()],
+            )
+            .unwrap();
+        client
+            .update(
+                &format!(
+                    "UPDATE {} AS document SET {} = tokenizer_catalog.tokenize(({})::pg_catalog.text, {}::pg_catalog.text) WHERE ({predicate})",
+                    config.table,
+                    quote_identifier(target_column),
+                    quote_identifier(source_column),
+                    quote_literal(tokenizer_name)
+                ),
+                None,
+                &[],
+            )
+            .unwrap();
+        client.update(
+            &format!(r#"CREATE TRIGGER "model_{model_name}_trigger_insert"
+                BEFORE INSERT OR {} ON {} FOR EACH ROW
+                EXECUTE FUNCTION tokenizer_catalog.custom_model_tokenizer_set_target_column_trigger({}, {}, {}{})"#,
+                update_event(&config), config.table, quote_literal(tokenizer_name), quote_literal(source_column),
+                quote_literal(target_column),
+                filter.map(|filter| format!(", {}", quote_literal(filter))).unwrap_or_default()),
+            None, &[],
+        ).unwrap();
+    });
+}
 
 #[pgrx::pg_trigger]
 fn custom_model_tokenizer_set_target_column_trigger<'a>(
@@ -287,21 +381,60 @@ fn custom_model_tokenizer_set_target_column_trigger<'a>(
 
     let mut new = trigger.new().expect("new tuple is missing").into_owned();
     let tg_argv = trigger.extra_args().expect("trigger arguments are missing");
-    if tg_argv.len() != 3 {
+    if !(3..=4).contains(&tg_argv.len()) {
         panic!("Invalid trigger arguments");
     }
     let tokenizer_name = &tg_argv[0];
     let source_column = &tg_argv[1];
     let target_column = &tg_argv[2];
 
+    if let Some(filter) = tg_argv.get(3) {
+        let row = trigger.new().expect("new tuple is missing");
+        let oid = row.composite_type_oid().expect("row type is missing");
+        // SAFETY: the OID comes from this exact composite tuple's descriptor.
+        let row = unsafe { pgrx::datum::DatumWithOid::new(row, oid) };
+        let matches = spi_get_one::<bool>(
+            &format!("SELECT ({filter}) IS TRUE FROM (SELECT ($1).*) AS document"),
+            &[row],
+        )
+        .unwrap();
+        if !matches {
+            // Leave nonmatching rows untouched, including any existing embedding.
+            return Ok(Some(new));
+        }
+    }
+
     let source = new
         .get_by_name::<&str>(source_column)
         .expect("source column is missing");
     let Some(source) = source else {
+        unsafe {
+            new.set_by_index_unchecked(
+                new.get_attribute_by_name(target_column)
+                    .expect("target column is missing")
+                    .0,
+                None,
+            )
+        };
         return Ok(Some(new));
     };
 
-    let target = crate::tokenizer::tokenize(source, tokenizer_name);
+    // A preceding vocabulary trigger may have waited for another transaction.
+    // Use a read-write SPI call so READ COMMITTED gets a fresh snapshot that can
+    // see that writer's committed IDs as well as our own newly inserted tokens.
+    let target: Vec<i32> = pgrx::Spi::connect_mut(|client| {
+        client
+            .update(
+                "SELECT tokenizer_catalog.tokenize($1, $2)",
+                Some(1),
+                &[source.into(), tokenizer_name.as_str().into()],
+            )
+            .unwrap_or_report()
+            .first()
+            .get_one()
+            .unwrap_or_report()
+            .expect("tokenizer result is missing")
+    });
     let (idx, att) = new
         .get_attribute_by_name(target_column)
         .expect("get target column failed");
@@ -340,15 +473,6 @@ fn custom_model_tokenizer_set_target_column_trigger<'a>(
     }
 
     Ok(Some(new))
-}
-
-fn quote_identifier(ident: &str) -> String {
-    unsafe {
-        let ptr = pgrx::pg_sys::quote_identifier(ident.as_pg_cstr());
-        let quoted_str = CStr::from_ptr(ptr).to_str().unwrap().to_string();
-        pgrx::pg_sys::pfree(ptr as _);
-        quoted_str
-    }
 }
 
 fn lookup_type_name(oid: pgrx::pg_sys::Oid) -> String {

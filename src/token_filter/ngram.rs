@@ -2,7 +2,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
 //
-// Copyright (c) 2025-2026 TensorChord Inc.
+// Copyright (c) 2025 TensorChord Inc.
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
@@ -52,16 +52,24 @@ pub struct Ngram {
 
 impl TokenFilter for Ngram {
     fn apply(&self, token: String) -> Vec<String> {
+        let min_gram = self.config.min_gram;
+        let max_gram = self.config.max_gram;
+        // N-grams count characters (Unicode scalar values), not bytes.
+        let bounds: Vec<usize> = token
+            .char_indices()
+            .map(|(offset, _)| offset)
+            .chain(std::iter::once(token.len()))
+            .collect();
+        let chars = bounds.len() - 1;
         let mut results = Vec::new();
-        let len = token.len();
-        for i in 0..=(len - self.config.min_gram) {
-            for j in (i + self.config.min_gram)..=(i + self.config.max_gram).min(len) {
-                results.push(token[i..j].to_string());
+        // A token shorter than min_gram has no n-grams.
+        for start in 0..(chars + 1).saturating_sub(min_gram) {
+            for end in (start + min_gram)..=(start + max_gram).min(chars) {
+                results.push(token[bounds[start]..bounds[end]].to_string());
             }
         }
-        if self.config.preserve_original
-            && !(self.config.min_gram..=self.config.max_gram).contains(&len)
-        {
+        // A token whose length is in range is already one of the n-grams.
+        if self.config.preserve_original && !(min_gram..=max_gram).contains(&chars) {
             results.push(token);
         }
         results
@@ -75,5 +83,57 @@ impl Ngram {
         }
 
         Ngram { config }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Ngram, NgramConfig, TokenFilter};
+
+    fn ngram(min_gram: usize, max_gram: usize, preserve_original: bool) -> Ngram {
+        Ngram::new(NgramConfig {
+            max_gram,
+            min_gram,
+            preserve_original,
+        })
+    }
+
+    #[test]
+    fn ascii_output_is_unchanged() {
+        let grams = ngram(1, 2, false).apply("abc".into());
+        assert_eq!(grams, ["a", "ab", "b", "bc", "c"]);
+        let grams = ngram(2, 3, false).apply("abcd".into());
+        assert_eq!(grams, ["ab", "abc", "bc", "bcd", "cd"]);
+    }
+
+    #[test]
+    fn counts_characters_not_bytes() {
+        assert_eq!(
+            ngram(1, 2, false).apply("中文".into()),
+            ["中", "中文", "文"]
+        );
+        assert_eq!(ngram(2, 2, false).apply("café".into()), ["ca", "af", "fé"]);
+        assert_eq!(ngram(1, 1, false).apply("🦀x".into()), ["🦀", "x"]);
+        // A combining mark is a character of its own.
+        assert_eq!(
+            ngram(1, 1, false).apply("e\u{301}".into()),
+            ["e", "\u{301}"]
+        );
+    }
+
+    #[test]
+    fn short_and_empty_tokens() {
+        assert!(ngram(2, 3, false).apply("a".into()).is_empty());
+        assert!(ngram(2, 3, false).apply("中".into()).is_empty());
+        assert!(ngram(1, 2, false).apply(String::new()).is_empty());
+        assert_eq!(ngram(2, 3, true).apply("中".into()), ["中"]);
+        assert_eq!(ngram(1, 2, true).apply(String::new()), [""]);
+    }
+
+    #[test]
+    fn preserve_original_once() {
+        assert_eq!(ngram(1, 2, true).apply("中文".into()), ["中", "中文", "文"]);
+        assert_eq!(ngram(1, 1, true).apply("中文".into()), ["中", "文", "中文"]);
+        assert_eq!(ngram(255, 255, true).apply("ab".into()), ["ab"]);
     }
 }
