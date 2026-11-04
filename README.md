@@ -1,12 +1,12 @@
 # pg_tokenizer
 
 [![Website: vchord.pgsty.com](https://img.shields.io/badge/Website-vchord.pgsty.com-slategray?style=flat&logo=cilium&logoColor=white)](https://vchord.pgsty.com/)
-[![Docs: pg_tokenizer](https://img.shields.io/badge/Docs-pg__tokenizer-slategray?style=flat)](https://vchord.pgsty.com/docs/tokenizer/)
-[![Catalog: pg_tokenizer](https://img.shields.io/badge/Catalog-pg__tokenizer-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
+[![Docs: tokenizer](https://img.shields.io/badge/Docs-tokenizer-slategray?style=flat)](https://vchord.pgsty.com/docs/tokenizer/)
+[![Catalog: tokenizer](https://img.shields.io/badge/Catalog-tokenizer-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
 [![Version: v1.0.0](https://img.shields.io/badge/Version-v1.0.0-slategray?style=flat)](https://github.com/pgsty/pg_tokenizer/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-slategray?style=flat&logo=opensourceinitiative&logoColor=green)](https://github.com/pgsty/pg_tokenizer/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/pgsty/pg_tokenizer?style=flat&logo=github&logoColor=black&color=slategray)](https://star-history.com/#pgsty/pg_tokenizer&Date)
-[![PostgreSQL: 14-18](https://img.shields.io/badge/PostgreSQL-14--18-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
+[![PostgreSQL: 14-19](https://img.shields.io/badge/PG-14--19-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
 
 **`pg_tokenizer`** is a standalone multilingual text analyzer and vocabulary tokenizer extension for PostgreSQL, designed to power full-text BM25 ranking with [`vchord_bm25`](https://github.com/pgsty/vchord_bm25) and hybrid retrieval with [`vchord`](https://github.com/pgsty/vchord).
 
@@ -18,9 +18,9 @@
 
 `pg_tokenizer` is part of the **Vchord** extension family maintained by [PGSTY](https://pgsty.com):
 
-- **[`vchord`](https://github.com/pgsty/vchord)** ([Docs](https://vchord.pgsty.com/docs/vchord/) · [PGEXT](https://pgext.cloud/ext/vchord) · [Pigsty](https://pigsty.io/ext/e/vchord)): Scalable, high-performance, and disk-friendly vector similarity search (`vchordrq` & `vchordg`).
-- **[`vchord_bm25`](https://github.com/pgsty/vchord_bm25)** ([Docs](https://vchord.pgsty.com/docs/bm25/) · [PGEXT](https://pgext.cloud/ext/vchord_bm25) · [Pigsty](https://pigsty.io/ext/e/vchord_bm25)): Native BM25 full-text ranking index (`Block-WeakAnd`).
-- **[`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer)** ([Docs](https://vchord.pgsty.com/docs/tokenizer/) · [PGEXT](https://pgext.cloud/ext/pg_tokenizer) · [Pigsty](https://pigsty.io/ext/e/pg_tokenizer)): Standalone multilingual text analyzer and vocabulary tokenizer.
+- **[`vchord`](https://github.com/pgsty/vchord)** ([Docs](https://vchord.pgsty.com/docs/vchord/) / [Meta](https://pgext.cloud/ext/vchord)): Scalable, high-performance, and disk-friendly vector similarity search.
+- **[`vchord_bm25`](https://github.com/pgsty/vchord_bm25)** ([Docs](https://vchord.pgsty.com/docs/bm25/) / [Meta](https://pgext.cloud/ext/vchord_bm25)): Native BM25 full-text ranking index (`Block-WeakAnd`).
+- **[`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer)** ([Docs](https://vchord.pgsty.com/docs/tokenizer/) / [Meta](https://pgext.cloud/ext/pg_tokenizer)): Standalone multilingual text analyzer and vocabulary tokenizer.
 
 ---
 
