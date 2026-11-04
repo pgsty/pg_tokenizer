@@ -1,42 +1,65 @@
 name: Release
 
-# Temporarily keep publishing manual while the local package builds are validated.
+# Build all packages before uploading them to a draft release for review.
 on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "tag name (semver without v-prefix)"
+        description: "existing release tag (v1.0.0 or 1.0.0)"
         required: true
         type: string
 
+permissions:
+  actions: read
+  contents: read
+
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  semver:
+  prepare:
     runs-on: "ubuntu-latest"
 
     steps:
-      - name: Semver
-        id: semver
+      - name: Resolve release tag
+        id: release
         uses: actions/github-script@v7
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         with:
           script: |
-            const tag = "${{ github.event.inputs.tag }}" || "${{ github.event.release.tag_name }}";
-            console.log(`Tag: ${tag}`);
+            const version = process.env.INPUT_TAG.trim().replace(/^v/, '');
             const r = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
-            if (!r.test(tag)) {
-              core.setFailed(`Action failed with an invalid semver.`);
+            if (!r.test(version)) {
+              core.setFailed('Invalid release version. Expected v1.0.0 or 1.0.0.');
+              return;
             }
-            core.setOutput('SEMVER', tag);
+            const tag = `v${version}`;
+            const { data: commit } = await github.rest.repos.getCommit({
+              ...context.repo, ref: `refs/tags/${tag}`,
+            });
+            const { data: checks } = await github.rest.actions.listWorkflowRuns({
+              ...context.repo, workflow_id: 'check.yml', head_sha: commit.sha,
+              status: 'success', per_page: 1,
+            });
+            if (checks.workflow_runs.length === 0) {
+              core.setFailed('The release commit must pass the Check workflow before packaging.');
+              return;
+            }
+            core.setOutput('semver', version);
+            core.setOutput('tag', tag);
+            core.setOutput('sha', commit.sha);
 
     outputs:
-      SEMVER: ${{ steps.semver.outputs.SEMVER }}
+      semver: ${{ steps.release.outputs.semver }}
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
 
   build:
-    needs: ["semver"]
+    needs: ["prepare"]
     strategy:
+      fail-fast: false
       matrix:
         version: ["14", "15", "16", "17", "18"]
         arch: ["x86_64", "aarch64"]
@@ -47,24 +70,94 @@ jobs:
       RUST_BACKTRACE: 1
       SCCACHE_GHA_ENABLED: true
       RUSTC_WRAPPER: sccache
-      RUSTFLAGS: "-Dwarnings -Clink-arg=-Wl,--no-gc-sections"
-      SEMVER: ${{ needs.semver.outputs.SEMVER }}
+      RUSTFLAGS: "-Dwarnings"
+      SEMVER: ${{ needs.prepare.outputs.semver }}
       VERSION: ${{ matrix.version }}
       ARCH: ${{ matrix.arch }}
       PLATFORM: ${{ matrix.arch == 'x86_64' && 'amd64' || 'arm64' }}
 
     steps:
-      - name: Checkout
+      - name: Checkout release commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Check package version
+        run: |
+          python3 - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+          actual = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
+          expected = os.environ["SEMVER"]
+          if actual != expected:
+              raise SystemExit(f"Cargo version {actual} does not match release version {expected}")
+          if not Path(f"sql/install/pg_tokenizer--{expected}.sql").is_file():
+              raise SystemExit(f"Missing install SQL for {expected}")
+          PY
       - name: Set up Sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Set up Environment
         run: ./tools/setup.sh ${{ matrix.version }}
       - name: Build
         run: ./tools/package.sh
-      - name: Upload Artifacts
+      - name: Save packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-tokenizer-pg${{ matrix.version }}-${{ matrix.arch }}
+          path: |
+            build/*.deb
+            build/*.zip
+          if-no-files-found: error
+
+  upload:
+    needs: ["prepare", "build"]
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pg-tokenizer-*
+          merge-multiple: true
+          path: artifacts
+      - name: Prepare draft release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            const { data: commit } = await github.rest.repos.getCommit({
+              ...context.repo, ref: `refs/tags/${tag}`,
+            });
+            if (commit.sha !== process.env.RELEASE_SHA) {
+              core.setFailed('Release tag moved during the build. Refusing to upload.');
+              return;
+            }
+            let release;
+            try {
+              ({ data: release } = await github.rest.repos.getReleaseByTag({
+                ...context.repo, tag,
+              }));
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            if (release) {
+              if (!release.draft) {
+                core.setFailed('Release is already published. Refusing to replace published assets.');
+              }
+              return;
+            }
+            await github.rest.repos.createRelease({
+              ...context.repo, tag_name: tag, name: tag, draft: true,
+              prerelease: tag.includes('-'),
+              body: 'Packages built from the release tag. Review CI results and release notes before publishing.',
+            });
+      - name: Upload packages to draft
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload --clobber $SEMVER ./build/postgresql-${VERSION}-pg-tokenizer_${SEMVER}-1_${PLATFORM}.deb
-          gh release upload --clobber $SEMVER ./build/postgresql-${VERSION}-pg-tokenizer_${SEMVER}_${ARCH}-linux-gnu.zip
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" artifacts/*.deb artifacts/*.zip --clobber

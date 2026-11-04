@@ -1,7 +1,8 @@
 name: Check
 
-# Temporarily keep CI manual while the local package builds are validated.
 on:
+  push:
+  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +14,7 @@ env:
   RUST_BACKTRACE: 1
   SCCACHE_GHA_ENABLED: true
   RUSTC_WRAPPER: sccache
-  RUSTFLAGS: "-Dwarnings -Clink-arg=-Wl,--no-gc-sections"
+  RUSTFLAGS: "-Dwarnings"
 
 jobs:
   style:
@@ -31,7 +32,7 @@ jobs:
           // you may not use this file except in compliance with the License.
           // You may obtain a copy of the License at <http://www.apache.org/licenses/LICENSE-2.0>
           //
-          // Copyright (c) 2025-2026 TensorChord Inc.
+          // Copyright (c) 2025 TensorChord Inc.
           // Copyright (c) 2026 PGSTY PTE. LTD.
           // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
           EOF
@@ -40,13 +41,14 @@ jobs:
         uses: crate-ci/typos@master
       - name: Taplo
         run: |
-          curl -fsSL https://github.com/tamasfe/taplo/releases/latest/download/taplo-full-linux-$(uname -m).gz | gzip -d - | install -m 755 /dev/stdin /usr/local/bin/taplo
+          curl -fsSL "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-$(uname -m).gz" | gzip -d - | install -m 755 /dev/stdin /usr/local/bin/taplo
           taplo fmt --check
       - name: Rustfmt
         run: cargo fmt --check
 
   lint:
     strategy:
+      fail-fast: false
       matrix:
         version: ["14", "15", "16", "17", "18"]
         arch: ["x86_64", "aarch64"]
@@ -60,13 +62,22 @@ jobs:
       - name: Set up Environment
         run: ./tools/setup.sh ${{ matrix.version }}
       - name: Clippy
-        run: cargo clippy --locked --features pg${{ matrix.version }}
+        run: cargo clippy --locked --features "pg${{ matrix.version }} lindera-ipadic"
       - name: Unit Test
-        run: cargo test --locked --no-fail-fast --features pg${{ matrix.version }}
+        run: cargo test --locked --no-fail-fast --features "pg${{ matrix.version }} lindera-ipadic"
       - name: Install
         run: cargo pgrx install --features "pg${{ matrix.version }} lindera-ipadic" --release --sudo
       - name: Integration Test
         run: |
           sudo systemctl start postgresql
           psql -c 'CREATE EXTENSION IF NOT EXISTS pg_tokenizer CASCADE;'
-          sqllogictest --db $USER --user $USER './tests/**/*.slt'
+          sqllogictest --db "$USER" --user "$USER" './tests/**/*.slt'
+      - name: Concurrency, permissions, and upgrade tests
+        run: |
+          sudo cp sql/install/pg_tokenizer--0.1.[01].sql "$(pg_config --sharedir)/extension/"
+          sudo cp sql/upgrade/*.sql "$(pg_config --sharedir)/extension/"
+          python3 -m venv /tmp/tokenizer-tests
+          /tmp/tokenizer-tests/bin/pip install 'psycopg[binary]'
+          PG_TOKENIZER_TEST_DSN="host=localhost user=$USER dbname=$USER" timeout 180 /tmp/tokenizer-tests/bin/python tests/test_integration.py
+      - name: Preload startup and database isolation
+        run: timeout 120 /tmp/tokenizer-tests/bin/python tests/test_preload.py

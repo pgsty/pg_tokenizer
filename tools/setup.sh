@@ -9,14 +9,15 @@ sudo apt-get purge -y '^postgres.*' '^libpq.*'
 sudo apt-get install -y postgresql-common
 sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
 sudo apt-get install -y postgresql-server-dev-${version}
-sudo apt-get install -y postgresql-${version}
+sudo apt-get install -y postgresql-${version} python3-venv zip dpkg-dev
 
 echo "local all all trust" | sudo tee /etc/postgresql/${version}/main/pg_hba.conf
 echo "host all all 127.0.0.1/32 trust" | sudo tee -a /etc/postgresql/${version}/main/pg_hba.conf
 echo "host all all ::1/128 trust" | sudo tee -a /etc/postgresql/${version}/main/pg_hba.conf
 sudo -iu postgres createuser -s -r $USER
 sudo -iu postgres createdb -O $USER $USER
-sudo -iu postgres psql -c 'ALTER SYSTEM SET shared_preload_libraries = "pg_tokenizer.so"'
+sudo -iu postgres psql -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
+sudo -iu postgres psql -c "ALTER SYSTEM SET max_prepared_transactions = 10;"
 sudo systemctl stop postgresql
 
 PGRX_VERSION=$(grep -o 'pgrx = "=[^"]*' Cargo.toml | cut -d = -f 3)

@@ -6,6 +6,8 @@
 AGENTS.md
 CLAUDE.md
 /target*
+/build/
+__pycache__/
 *.iml
 **/*.rs.bk
 .vscode/

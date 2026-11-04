@@ -6,8 +6,9 @@ printf "VERSION = ${VERSION}\n"
 printf "ARCH = ${ARCH}\n"
 printf "PLATFORM = ${PLATFORM}\n"
 
-cargo build --locked --lib --features pg$VERSION --release
-cargo pgrx schema --features pg$VERSION --out ./target/schema.sql
+# Build the release library and its schema together. cargo-pgrx scopes the
+# schema-section retention flag to this cdylib instead of every Rust target.
+cargo pgrx schema --release --cargo=--locked --features "pg${VERSION} lindera-ipadic" --out ./target/schema.sql
 
 mkdir -p ./build/zip
 [[ -d ./sql/upgrade ]] && cp -a ./sql/upgrade/. ./build/zip/
@@ -21,20 +22,18 @@ mkdir -p ./build/deb/DEBIAN
 mkdir -p ./build/deb/usr/share/postgresql/$VERSION/extension/
 mkdir -p ./build/deb/usr/lib/postgresql/$VERSION/lib/
 mkdir -p ./build/deb/usr/share/doc/postgresql-$VERSION-pg-tokenizer/
-for file in $(ls ./build/zip/*.sql | xargs -n 1 basename); do
-    cp ./build/zip/$file ./build/deb/usr/share/postgresql/$VERSION/extension/$file
-done
-for file in $(ls ./build/zip/*.control | xargs -n 1 basename); do
-    cp ./build/zip/$file ./build/deb/usr/share/postgresql/$VERSION/extension/$file
-done
-for file in $(ls ./build/zip/*.so | xargs -n 1 basename); do
-    cp ./build/zip/$file ./build/deb/usr/lib/postgresql/$VERSION/lib/$file
-done
+cp ./build/zip/*.sql ./build/zip/*.control ./build/deb/usr/share/postgresql/$VERSION/extension/
+cp ./build/zip/*.so ./build/deb/usr/lib/postgresql/$VERSION/lib/
+# Derive runtime dependencies from the actual ELF, including libstdc++.
+mkdir -p ./build/debian
+printf 'Source: pg-tokenizer\n\nPackage: postgresql-%s-pg-tokenizer\nArchitecture: any\nDescription: PostgreSQL tokenizer\n' "$VERSION" > ./build/debian/control
+SHLIBS_DEPENDS=$(cd ./build && dpkg-shlibdeps -O -e zip/pg_tokenizer.so | sed -n 's/^shlibs:Depends=//p')
+test -n "$SHLIBS_DEPENDS"
 echo "Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Source: https://github.com/pgsty/pg_tokenizer
 
 Files: *
-Copyright: 2025-2026 TensorChord Inc.
+Copyright: 2025 TensorChord Inc.
            2026 PGSTY PTE. LTD.
 License: Apache-2.0
 $(sed -e 's/^$/./g' -e 's/^/ /g' ./LICENSE)" \
@@ -44,6 +43,7 @@ Version: ${SEMVER}-1
 Section: database
 Priority: optional
 Architecture: ${PLATFORM}
+Depends: postgresql-${VERSION}, ${SHLIBS_DEPENDS}
 Maintainer: Ruohang Feng <rh@vonng.com>
 Description: Tokenizer plugin for PostgreSQL
 Homepage: https://vchord.pgsty.com/
