@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
-use crate::utils::raise_error;
+use crate::utils::{invalid_config, raise_error};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LinderaConfig {
@@ -181,7 +181,8 @@ fn token_id(word: WordId) -> Option<u32> {
 #[pgrx::pg_extern(volatile, parallel_safe)]
 fn create_lindera_model(name: &str, config: &str) {
     validate_new_model_name(name).unwrap();
-    let config: LinderaConfig = toml::from_str(config).unwrap();
+    let config: LinderaConfig =
+        toml::from_str(config).unwrap_or_else(|e| invalid_config("Lindera model", name, e));
 
     let insert_model = r#"
         INSERT INTO tokenizer_catalog.model (name, config) VALUES ($1, $2)

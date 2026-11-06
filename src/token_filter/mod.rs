@@ -57,7 +57,14 @@ pub fn get_token_filter(config: TokenFilterConfig) -> TokenFilterPtr {
         TokenFilterConfig::Stopwords(name) => stopwords::get_stopwords_token_filter(&name),
         TokenFilterConfig::PgDict(name) => Arc::new(PgDictTokenFilter::new(&name)),
         TokenFilterConfig::Synonym(name) => synonym::get_synonym_token_filter(&name),
-        TokenFilterConfig::NGram(config) => Arc::new(Ngram::new(config)),
+        TokenFilterConfig::NGram(config) => Arc::new(Ngram::new(config).unwrap_or_else(|e| {
+            crate::utils::raise_error(
+                pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+                "invalid ngram token filter configuration",
+                Some(e.to_string()),
+                None,
+            )
+        })),
     }
 }
 

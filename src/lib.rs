@@ -33,7 +33,9 @@ compile_error!("PostgreSQL version must be selected.");
 
 #[pgrx::pg_guard]
 extern "C-unwind" fn _PG_init() {
-    if unsafe { pgrx::pg_sys::IsUnderPostmaster } {
+    // Under EXEC_BACKEND, children reload preloaded libraries with
+    // IsUnderPostmaster set; only this flag identifies preloading.
+    if !unsafe { pgrx::pg_sys::process_shared_preload_libraries_in_progress } {
         pgrx::error!("pg_tokenizer must be loaded via shared_preload_libraries.");
     }
     IS_MAIN.set(true);

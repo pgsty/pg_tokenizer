@@ -15,7 +15,14 @@ pub struct RegexPreTokenizer {
 impl RegexPreTokenizer {
     pub fn new(pattern: &str) -> Self {
         Self {
-            pattern: regex::Regex::new(pattern).unwrap(),
+            pattern: regex::Regex::new(pattern).unwrap_or_else(|e| {
+                crate::utils::raise_error(
+                    pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+                    "invalid regular expression in regex pre_tokenizer",
+                    Some(e.to_string()),
+                    None,
+                )
+            }),
         }
     }
 }

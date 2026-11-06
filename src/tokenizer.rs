@@ -18,7 +18,7 @@ use crate::{
     pre_tokenizer::PreTokenizerConfig,
     text_analyzer::{get_text_analyzer, TextAnalyzer, TextAnalyzerConfig, TextAnalyzerPtr},
     token_filter::TokenFilterConfig,
-    utils::spi_get_one,
+    utils::{invalid_config, raise_error, spi_get_one},
 };
 
 #[derive(Clone, Serialize, Deserialize, Validate)]
@@ -123,14 +123,18 @@ fn get_tokenizer_from_database(name: &str) -> Option<TokenizerPtr> {
         &[name.into()],
     )?;
 
-    let config: TokenizerConfig = serde_json::from_str(config_bytes).unwrap();
+    let config: TokenizerConfig =
+        serde_json::from_str(config_bytes).unwrap_or_else(|e| invalid_config("tokenizer", name, e));
     Some(Arc::new(Tokenizer::build(config)))
 }
 
 #[pgrx::pg_extern(volatile, parallel_safe)]
 fn create_tokenizer(name: &str, config: &str) {
-    let config: TokenizerConfig = toml::from_str(config).unwrap();
-    config.validate().unwrap();
+    let config: TokenizerConfig =
+        toml::from_str(config).unwrap_or_else(|e| invalid_config("tokenizer", name, e));
+    if let Err(e) = config.validate() {
+        invalid_config("tokenizer", name, e);
+    }
 
     let config_str = serde_json::to_string(&config).unwrap();
     let tokenizer = Tokenizer::build(config);
@@ -181,5 +185,20 @@ pub fn tokenize(text: &str, tokenizer_name: &str) -> Vec<i32> {
     let tokenizer = get_tokenizer(tokenizer_name);
     let ids = tokenizer.tokenize(text);
     crate::utils::check_for_interrupts();
-    ids.into_iter().map(|x| x.try_into().unwrap()).collect()
+    // Hugging Face imports reject larger IDs; models stored before that check
+    // can still contain them.
+    ids.into_iter()
+        .map(|id| {
+            i32::try_from(id).unwrap_or_else(|_| {
+                raise_error(
+                    pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE,
+                    format!(
+                        "token ID {id} of tokenizer \"{tokenizer_name}\" is out of range for type integer"
+                    ),
+                    None,
+                    Some("Recreate the model with token IDs not greater than 2147483647."),
+                )
+            })
+        })
+        .collect()
 }

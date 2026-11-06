@@ -19,7 +19,7 @@ use crate::{
     character_filter::{get_character_filter, CharacterFilterConfig, CharacterFilterPtr},
     pre_tokenizer::{get_pre_tokenizer, PreTokenizerConfig, PreTokenizerPtr},
     token_filter::{get_token_filter, TokenFilterConfig, TokenFilterPtr},
-    utils::{check_for_interrupts, spi_get_one},
+    utils::{check_for_interrupts, invalid_config, spi_get_one},
 };
 
 #[derive(Clone, Serialize, Deserialize, Validate)]
@@ -130,14 +130,18 @@ fn get_text_analyzer_from_database(name: &str) -> Option<TextAnalyzerPtr> {
         &[name.into()],
     )?;
 
-    let config: TextAnalyzerConfig = serde_json::from_str(config).unwrap();
+    let config: TextAnalyzerConfig =
+        serde_json::from_str(config).unwrap_or_else(|e| invalid_config("text analyzer", name, e));
     Some(Arc::new(TextAnalyzer::build(config)))
 }
 
 #[pgrx::pg_extern(volatile, parallel_safe)]
 fn create_text_analyzer(name: &str, config: &str) {
-    let config: TextAnalyzerConfig = toml::from_str(config).unwrap();
-    config.validate().unwrap();
+    let config: TextAnalyzerConfig =
+        toml::from_str(config).unwrap_or_else(|e| invalid_config("text analyzer", name, e));
+    if let Err(e) = config.validate() {
+        invalid_config("text analyzer", name, e);
+    }
 
     let config_str = serde_json::to_string(&config).unwrap();
     let text_analyzer = TextAnalyzer::build(config);

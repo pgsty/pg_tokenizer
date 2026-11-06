@@ -22,7 +22,7 @@
 
 - `tokenizer_catalog.create_custom_model(name TEXT, config TEXT)`: Create a custom model.
 - `tokenizer_catalog.create_custom_model_tokenizer_and_trigger(tokenizer_name TEXT, model_name TEXT, text_analyzer_name TEXT, table_name TEXT, source_column TEXT, target_column TEXT [, filter TEXT])`: Create a custom model tokenizer and trigger. The optional seventh argument restricts vocabulary and embedding updates; omit it or pass `NULL` to include all rows (1.0.0). Six-argument calls remain supported.
-- `tokenizer_catalog.drop_custom_model(name TEXT)`: Drop a custom model.
+- `tokenizer_catalog.drop_custom_model(name TEXT)`: Drop a custom model. A missing model raises a WARNING, like the other drop functions; tokenizers that reference the model are not dropped.
 
 <br/>
 
@@ -37,7 +37,7 @@
 
 <br/>
 
-- `tokenizer_catalog.create_huggingface_model(name TEXT, config TEXT)`: Create a huggingface model.
+- `tokenizer_catalog.create_huggingface_model(name TEXT, config TEXT)`: Create a huggingface model. Token IDs (vocabulary, added tokens, and post-processor special tokens) must not exceed 2147483647.
 - `tokenizer_catalog.drop_huggingface_model(name TEXT)`: Drop a huggingface model.
 
 ### Tokenizer
@@ -51,7 +51,7 @@
 
 ## Configuration
 
-> We utilize `TOML` syntax to express all configurations.
+> We utilize `TOML` syntax to express all configurations. Configurations that cannot be parsed or validated, including invalid regular expressions, raise SQLSTATE `22023` (`invalid_parameter_value`) with the parser's message as DETAIL.
 
 ### Options for `text analyzer`
 

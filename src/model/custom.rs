@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     text_analyzer::get_text_analyzer,
-    utils::{raise_error, spi_get_one},
+    utils::{invalid_config, raise_error, spi_get_one},
 };
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
@@ -147,7 +147,8 @@ fn update_event(config: &CustomModelConfig) -> String {
 fn create_custom_model(name: &str, config: &str) {
     validate_new_model_name(name).unwrap();
 
-    let mut config: CustomModelConfig = toml::from_str(config).unwrap();
+    let mut config: CustomModelConfig =
+        toml::from_str(config).unwrap_or_else(|e| invalid_config("custom model", name, e));
     config.table = resolve_table(&config.table);
     let table = &config.table;
     let column = quote_identifier(&config.column);
@@ -262,8 +263,14 @@ fn drop_custom_model(name: &str) {
     }
 
     let select_config = r#"SELECT config FROM tokenizer_catalog.model WHERE name = $1"#;
-    let config_bytes: &str = spi_get_one(select_config, &[name.into()]).unwrap();
-    let config: ModelConfig = serde_json::from_str(config_bytes).unwrap();
+    // Like the other drop functions, a missing model is a WARNING. Tokenizers
+    // that reference the name are not dropped.
+    let Some(config_bytes) = spi_get_one::<&str>(select_config, &[name.into()]) else {
+        pgrx::warning!("Model not found: {}", name);
+        return;
+    };
+    let config: ModelConfig =
+        serde_json::from_str(config_bytes).unwrap_or_else(|e| invalid_config("model", name, e));
     let ModelConfig::Custom(config) = &config else {
         panic!("Model is not a custom model: {}", name);
     };

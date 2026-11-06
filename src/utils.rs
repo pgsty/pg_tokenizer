@@ -36,6 +36,18 @@ pub fn raise_error(
     unreachable!("ERROR reports do not return")
 }
 
+/// Raise ERRCODE_INVALID_PARAMETER_VALUE for a configuration that cannot be
+/// parsed or validated, with the parser's message as DETAIL.
+#[track_caller]
+pub fn invalid_config(kind: &str, name: &str, error: impl std::fmt::Display) -> ! {
+    raise_error(
+        PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+        format!("invalid configuration for {kind} \"{name}\""),
+        Some(error.to_string()),
+        None,
+    )
+}
+
 static INTERRUPT_CHECK: OnceLock<fn()> = OnceLock::new();
 
 /// Installed by _PG_init. Unit tests never run it, so their executables do not

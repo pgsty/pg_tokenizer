@@ -20,7 +20,7 @@ use huggingface::{HuggingFaceConfig, HuggingFaceModel};
 use lindera::{LinderaConfig, LinderaModel};
 use serde::{Deserialize, Serialize};
 
-use crate::utils::spi_get_one;
+use crate::utils::{invalid_config, spi_get_one};
 
 pub trait TokenizerModel {
     fn apply(&self, token: String) -> Vec<u32>;
@@ -106,7 +106,8 @@ fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {
             return Some(preloaded.1.clone());
         }
     }
-    Some(build_model(name, &serde_json::from_str(config).unwrap()))
+    let config = serde_json::from_str(config).unwrap_or_else(|e| invalid_config("model", name, e));
+    Some(build_model(name, &config))
 }
 
 fn get_model_config(name: &str) -> Option<ModelConfig> {
@@ -115,7 +116,7 @@ fn get_model_config(name: &str) -> Option<ModelConfig> {
         &[name.into()],
     )?;
 
-    serde_json::from_str(config_bytes).unwrap()
+    Some(serde_json::from_str(config_bytes).unwrap_or_else(|e| invalid_config("model", name, e)))
 }
 
 fn build_model(name: &str, config: &ModelConfig) -> TokenizerModelPtr {

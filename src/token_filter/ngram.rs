@@ -81,12 +81,9 @@ impl TokenFilter for Ngram {
 }
 
 impl Ngram {
-    pub fn new(config: NgramConfig) -> Self {
-        if let Err(e) = config.validate() {
-            panic!("Invalid NgramConfig: {}", e);
-        }
-
-        Ngram { config }
+    pub fn new(config: NgramConfig) -> Result<Self, validator::ValidationErrors> {
+        config.validate()?;
+        Ok(Ngram { config })
     }
 }
 
@@ -100,6 +97,7 @@ mod tests {
             min_gram,
             preserve_original,
         })
+        .unwrap()
     }
 
     #[test]

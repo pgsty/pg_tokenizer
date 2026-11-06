@@ -22,6 +22,8 @@ We support importing models using [Hugging Face](https://huggingface.co/) config
 SELECT create_huggingface_model('bert_import', :'content');
 ```
 
+`tokenize()` returns `INT[]`, so the import rejects a tokenizer whose vocabulary, added tokens, or BERT/RoBERTa/template post-processor special tokens use an ID above 2147483647. A model stored by an earlier version with such IDs still loads, and `tokenize()` raises `token ID ... is out of range for type integer` (SQLSTATE `22003`) when it would return one; recreate the model with smaller IDs.
+
 ## Lindera model
 
 We support importing models using [lindera](https://github.com/lindera/lindera) config. You can use the `create_lindera_model` function to import a model.
