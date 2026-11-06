@@ -120,6 +120,12 @@ Vocabulary triggers first compute missing tokens. Only rows that add vocabulary 
 
 The embedding trigger refreshes its SPI snapshot after the vocabulary trigger, so at `READ COMMITTED` it can see token IDs committed by a writer it waited for. At `REPEATABLE READ` or `SERIALIZABLE`, a conflicting writer can receive SQLSTATE `40001` and must retry the whole transaction. Existing vocabulary IDs are preserved during upgrade; new IDs are internal mappings and are not guaranteed to match a separately created model.
 
+### Long tokens
+
+Vocabulary tokens are btree index keys, so a token longer than 2600 bytes is split into pieces of at most 2600 bytes, cut at UTF-8 character boundaries and kept in place in the token sequence. The vocabulary stores the pieces, and `tokenize()` and the embedding trigger look up the same pieces, so a long token contributes one ID per piece. Model creation and vocabulary triggers report a WARNING when they split tokens.
+
+In 1.0.0 and earlier, such tokens made `INSERT`/`UPDATE` and `create_custom_model` fail unless the length was an exact multiple of 2600 bytes and every cut fell on a character boundary; when splitting succeeded, the token was silently dropped from embeddings and `tokenize()` output. After upgrading, regenerate stored embeddings of rows containing tokens longer than 2600 bytes (for example `UPDATE documents SET embedding = tokenize(passage, 'tokenizer1')`), because they may be missing those tokens, and rebuild indexes that consume them.
+
 ### Filtering a corpus (1.0.0)
 
 Set `filter` in the custom model's TOML configuration, or pass a seventh `filter` argument to the convenience helper:

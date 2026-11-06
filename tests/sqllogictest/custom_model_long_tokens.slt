@@ -1,0 +1,120 @@
+# Custom-model tokens longer than 2600 bytes are stored and looked up as
+# pieces of at most 2600 bytes, cut at character boundaries, in order.
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE TABLE long_docs (id int PRIMARY KEY, passage text, embedding int[]);
+
+statement ok
+INSERT INTO long_docs (id, passage) VALUES (1, 'x ' || repeat('a', 2600) || ' y');
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('long_words', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    tokenizer_name => 'long_tokenizer', model_name => 'long_model',
+    text_analyzer_name => 'long_words', table_name => 'long_docs',
+    source_column => 'passage', target_column => 'embedding');
+
+statement ok
+INSERT INTO long_docs (id, passage) VALUES
+(2, repeat('b', 2601)),
+(3, repeat('c', 5200)),
+(4, repeat('ア', 1000)),
+(5, 'x ' || repeat('d', 2601) || ' y ' || repeat('e', 7801) || ' x');
+
+query IIT
+SELECT octet_length(token), char_length(token), left(token, 1)
+FROM tokenizer_catalog.model_long_model ORDER BY octet_length(token), token;
+----
+1 1 b
+1 1 d
+1 1 e
+1 1 x
+1 1 y
+402 134 ア
+2598 866 ア
+2600 2600 a
+2600 2600 b
+2600 2600 c
+2600 2600 d
+2600 2600 e
+
+# Embeddings keep the pieces in token order, and match tokenize().
+query IT
+SELECT id, embedding = ARRAY(
+    SELECT v.id FROM unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model(passage, 'long_words'))
+        WITH ORDINALITY AS t(token, n)
+    JOIN tokenizer_catalog.model_long_model AS v USING (token) ORDER BY n)
+FROM long_docs ORDER BY id;
+----
+1 t
+2 t
+3 t
+4 t
+5 t
+
+query IT
+SELECT id, embedding = tokenizer_catalog.tokenize(passage, 'long_tokenizer') FROM long_docs ORDER BY id;
+----
+1 t
+2 t
+3 t
+4 t
+5 t
+
+query II
+SELECT id, cardinality(embedding) FROM long_docs ORDER BY id;
+----
+1 3
+2 2
+3 2
+4 2
+5 9
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer_for_custom_model(repeat('b', 2601), 'long_words')
+    = ARRAY[repeat('b', 2600), 'b'];
+----
+t
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer_for_custom_model('x ' || repeat('ア', 1000) || ' y', 'long_words')
+    = ARRAY['x', repeat('ア', 866), repeat('ア', 134), 'y'];
+----
+t
+
+query T
+SELECT embedding = ARRAY[
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'x'),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('d', 2600)),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'd'),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'y'),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('e', 2600)),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('e', 2600)),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('e', 2600)),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'e'),
+    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'x')]
+FROM long_docs WHERE id = 5;
+----
+t
+
+# A model created over existing long tokens builds the same vocabulary.
+statement ok
+SELECT tokenizer_catalog.create_custom_model('long_existing', $$
+table = 'long_docs'
+column = 'passage'
+text_analyzer = 'long_words'
+$$);
+
+query T
+SELECT array_agg(token ORDER BY token COLLATE "C") = (SELECT array_agg(token ORDER BY token COLLATE "C") FROM tokenizer_catalog.model_long_model)
+FROM tokenizer_catalog.model_long_existing;
+----
+t
+
+statement ok
+ROLLBACK;

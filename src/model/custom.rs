@@ -40,16 +40,16 @@ impl TokenizerModel for CustomModel {
             self.name
         );
 
-        let id = spi_get_one::<i32>(&query, &[text.into()]);
-
-        if let Some(id) = id {
-            vec![u32::try_from(id).unwrap()]
-        } else {
-            vec![]
-        }
+        // The vocabulary stores long tokens as pieces; look up the same pieces.
+        split_long_token(text)
+            .into_iter()
+            .filter_map(|piece| spi_get_one::<i32>(&query, &[piece.into()]))
+            .map(|id| u32::try_from(id).unwrap())
+            .collect()
     }
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
+        let tokens = split_long_tokens(tokens);
         let query = format!(
             r#"SELECT id, token FROM tokenizer_catalog."model_{}" WHERE token = ANY($1)"#,
             self.name
@@ -291,28 +291,50 @@ fn drop_custom_model(name: &str) {
     MODEL_OBJECT_POOL.remove(name);
 }
 
+// Vocabulary tokens are keys of a btree index, whose entries must fit in a
+// third of a page. Longer tokens are stored and looked up as pieces.
 const MAX_TOKEN_LENGTH: usize = 2600;
+
+// Split a token into pieces of at most MAX_TOKEN_LENGTH bytes, cut at UTF-8
+// character boundaries, in order. Shorter tokens are returned unchanged.
+fn split_long_token(token: String) -> Vec<String> {
+    if token.len() <= MAX_TOKEN_LENGTH {
+        return vec![token];
+    }
+    let mut pieces = Vec::with_capacity(token.len().div_ceil(MAX_TOKEN_LENGTH - 3));
+    let mut rest = token.as_str();
+    while rest.len() > MAX_TOKEN_LENGTH {
+        // A character is at most 4 bytes, so a boundary exists in the last 4.
+        let end = (MAX_TOKEN_LENGTH - 3..=MAX_TOKEN_LENGTH)
+            .rev()
+            .find(|&end| rest.is_char_boundary(end))
+            .expect("a UTF-8 character is at most 4 bytes");
+        let (piece, tail) = rest.split_at(end);
+        pieces.push(piece.to_string());
+        rest = tail;
+    }
+    pieces.push(rest.to_string());
+    pieces
+}
+
+// Split every long token in place, keeping the order of the token sequence.
+fn split_long_tokens(tokens: Vec<String>) -> Vec<String> {
+    if tokens.iter().all(|token| token.len() <= MAX_TOKEN_LENGTH) {
+        return tokens;
+    }
+    tokens.into_iter().flat_map(split_long_token).collect()
+}
 
 #[pgrx::pg_extern(volatile, parallel_safe)]
 fn apply_text_analyzer_for_custom_model(text: &str, text_analyzer_name: &str) -> Vec<String> {
     let text_analyzer = get_text_analyzer(text_analyzer_name);
-    let mut results = text_analyzer.apply(text);
-
-    // split all tokens that are longer than 2600 characters
-    let len = results.len();
-    for i in 0..len {
-        let token_len = results[i].len();
-        if token_len > MAX_TOKEN_LENGTH {
-            pgrx::warning!("There is a custom table token whose length has exceeded MAX_TOKEN_LENGTH({MAX_TOKEN_LENGTH}). It will be cut off to multiple tokens. If you need to support long token, welcome to submit an issue to \"https://github.com/pgsty/pg_tokenizer/issues\".");
-
-            let replace_token = results[i][..MAX_TOKEN_LENGTH].to_string();
-            let token = std::mem::replace(&mut results[i], replace_token);
-            for j in 1..(token.len().div_ceil(MAX_TOKEN_LENGTH)) {
-                results.push(token[j * MAX_TOKEN_LENGTH..][..MAX_TOKEN_LENGTH].to_string());
-            }
-        }
+    let tokens = text_analyzer.apply(text);
+    if tokens.iter().any(|token| token.len() > MAX_TOKEN_LENGTH) {
+        pgrx::warning!(
+            "custom model tokens longer than {MAX_TOKEN_LENGTH} bytes are split into pieces of at most {MAX_TOKEN_LENGTH} bytes"
+        );
     }
-    results
+    split_long_tokens(tokens)
 }
 
 pgrx::extension_sql_file!("../sql/custom_model.sql", name = "custom_model_triggers");
@@ -484,5 +506,87 @@ fn lookup_type_name(oid: pgrx::pg_sys::Oid) -> String {
         let typname = cstr.to_string_lossy().to_string();
         pgrx::pg_sys::pfree(cstr_name as _); // don't leak the palloc'd cstr_name
         typname
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{split_long_token, split_long_tokens, MAX_TOKEN_LENGTH};
+
+    #[test]
+    fn short_tokens_are_unchanged() {
+        assert_eq!(split_long_token(String::new()), [""]);
+        assert_eq!(split_long_token("a".repeat(2600)), ["a".repeat(2600)]);
+        let tokens = vec!["x".to_string(), "ア".repeat(866)];
+        assert_eq!(split_long_tokens(tokens.clone()), tokens);
+    }
+
+    #[test]
+    fn ascii_tokens_are_split_in_order() {
+        let token = format!("{}{}", "a".repeat(2600), "b");
+        assert_eq!(split_long_token(token), ["a".repeat(2600), "b".into()]);
+        let token = format!("{}{}", "c".repeat(2600), "d".repeat(2600));
+        assert_eq!(
+            split_long_token(token),
+            ["c".repeat(2600), "d".repeat(2600)]
+        );
+        let token = format!("{}{}{}", "e".repeat(2600), "f".repeat(2600), "g");
+        assert_eq!(
+            split_long_token(token),
+            ["e".repeat(2600), "f".repeat(2600), "g".into()]
+        );
+    }
+
+    #[test]
+    fn multibyte_characters_are_not_cut() {
+        // 2598 bytes fit; the 867th character would end at byte 2601.
+        let pieces = split_long_token("ア".repeat(1000));
+        assert_eq!(pieces, ["ア".repeat(866), "ア".repeat(134)]);
+        // A 4-byte character crossing the limit moves to the next piece.
+        let token = format!("{}{}{}", "a".repeat(2598), "🦀", "z");
+        assert_eq!(
+            split_long_token(token),
+            ["a".repeat(2598), "🦀z".to_string()]
+        );
+        // A 2-byte character ending exactly at the limit stays.
+        let token = format!("{}{}{}", "a".repeat(2598), "é", "z");
+        assert_eq!(
+            split_long_token(token),
+            [format!("{}é", "a".repeat(2598)), "z".to_string()]
+        );
+        for len in [2601, 3000, 7801, 100_000] {
+            let token: String = "aé中🦀".chars().cycle().take(len).collect();
+            let pieces = split_long_token(token.clone());
+            assert_eq!(pieces.concat(), token);
+            assert!(pieces
+                .iter()
+                .all(|p| !p.is_empty() && p.len() <= MAX_TOKEN_LENGTH));
+            assert!(pieces[..pieces.len() - 1]
+                .iter()
+                .all(|p| p.len() > MAX_TOKEN_LENGTH - 4));
+        }
+    }
+
+    #[test]
+    fn mixed_tokens_keep_their_positions() {
+        let tokens = vec![
+            "x".to_string(),
+            "b".repeat(2601),
+            "y".to_string(),
+            "c".repeat(5200),
+            "z".to_string(),
+        ];
+        assert_eq!(
+            split_long_tokens(tokens),
+            [
+                "x".to_string(),
+                "b".repeat(2600),
+                "b".into(),
+                "y".into(),
+                "c".repeat(2600),
+                "c".repeat(2600),
+                "z".into()
+            ]
+        );
     }
 }
