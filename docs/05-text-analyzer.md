@@ -19,7 +19,7 @@ We support following pre tokenizers:
 
 - `regex`: Generate tokens by matching the regular expression.
 - `unicode_segmentation`: Split the text into tokens according to the [`Unicode Standard Annex #29`](https://unicode.org/reports/tr29/).
-- `jieba`: Chinese text segmentation using the [Jieba](https://github.com/messense/jieba-rs) library.
+- `jieba`: Chinese text segmentation using the [Jieba](https://github.com/messense/jieba-rs) library, in `search` (default), `precise`, or `full` mode; see [Options for `jieba`](00-reference.md#options-for-jieba). In 1.0.0 and earlier, `full` and `precise` were swapped; regenerate values produced with either mode.
 
 ## Token Filter
 

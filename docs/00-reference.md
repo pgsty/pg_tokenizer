@@ -83,7 +83,13 @@ You can choose only one of the above options for each character filter.
 | Key        | Type    | Description                                                                            |
 | ---------- | ------- | -------------------------------------------------------------------------------------- |
 | mode       | String  | Jieba tokenizer mode, supported values: `full`, `precise`, `search`. default: `search` |
-| enable_hmm | Boolean | Whether to enable HMM, default: `true`                                                 |
+| enable_hmm | Boolean | Whether to use the HMM for unknown words in `precise` and `search` modes, default: `true`; `full` mode ignores it |
+
+- `full`: every dictionary word found in the text, overlapping (Jieba `cut_all`).
+- `precise`: the most likely segmentation, without overlaps (Jieba `cut`).
+- `search`: precise segmentation plus the dictionary words inside long words, for search indexing (Jieba `cut_for_search`).
+
+In 1.0.0 and earlier, `full` and `precise` were swapped: `full` produced precise segmentation (and honoured `enable_hmm`), while `precise` produced full-mode output. Analyzers that set `mode = "full"` or `mode = "precise"` now produce different tokens; regenerate stored token arrays, custom-model embeddings and `tsvector` values built with them, and rebuild dependent indexes. The default `search` mode is unchanged.
 
 ### Options for `token_filter`
 

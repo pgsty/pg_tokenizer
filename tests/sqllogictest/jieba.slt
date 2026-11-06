@@ -1,6 +1,7 @@
 statement ok
 BEGIN;
 
+# Full mode lists every dictionary word; it has no HMM step.
 statement ok
 SELECT tokenizer_catalog.create_text_analyzer('jieba_cut_full', $$
 [pre_tokenizer.jieba]
@@ -11,8 +12,26 @@ $$);
 query T
 SELECT tokenizer_catalog.apply_text_analyzer('我们中出了一个叛徒', 'jieba_cut_full');
 ----
-{我们,中,出,了,一个,叛徒}
+{我,我们,们,中,中出,出,了,一,一个,个,叛,叛徒,徒}
 
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('jieba_cut_full_hmm', $$
+[pre_tokenizer.jieba]
+mode = "full"
+enable_hmm = true
+$$);
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer('我们中出了一个叛徒', 'jieba_cut_full_hmm');
+----
+{我,我们,们,中,中出,出,了,一,一个,个,叛,叛徒,徒}
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer('我来到北京清华大学', 'jieba_cut_full');
+----
+{我,来,来到,到,北,北京,京,清,清华,清华大学,华,华大,大,大学,学}
+
+# Precise mode is the most likely segmentation; HMM joins unknown words.
 statement ok
 SELECT tokenizer_catalog.create_text_analyzer('jieba_cut_precise', $$
 [pre_tokenizer.jieba]
@@ -22,7 +41,24 @@ $$);
 query T
 SELECT tokenizer_catalog.apply_text_analyzer('我们中出了一个叛徒', 'jieba_cut_precise');
 ----
-{我,我们,们,中,中出,出,了,一,一个,个,叛,叛徒,徒}
+{我们,中出,了,一个,叛徒}
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('jieba_cut_precise_no_hmm', $$
+[pre_tokenizer.jieba]
+mode = "precise"
+enable_hmm = false
+$$);
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer('我们中出了一个叛徒', 'jieba_cut_precise_no_hmm');
+----
+{我们,中,出,了,一个,叛徒}
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer('我来到北京清华大学', 'jieba_cut_precise');
+----
+{我,来到,北京,清华大学}
 
 statement ok
 SELECT tokenizer_catalog.create_text_analyzer('jieba_cut_search', $$

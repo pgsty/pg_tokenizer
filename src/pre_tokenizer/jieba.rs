@@ -40,29 +40,32 @@ impl Default for JiebaConfig {
     }
 }
 
-struct JiebaFull {
+// Full mode lists every dictionary word in the text; it has no HMM step.
+struct JiebaFull;
+
+// Precise mode is the most likely segmentation; HMM handles unknown words.
+struct JiebaPrecise {
     enable_hmm: bool,
 }
 
-struct JiebaPrecise;
-
+// Search mode is precise mode plus the dictionary words inside long words.
 struct JiebaSearch {
     enable_hmm: bool,
 }
 
 impl PreTokenizer for JiebaFull {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        JIEBA
-            .cut(text, self.enable_hmm)
-            .into_iter()
-            .map(|t| t.word)
-            .collect()
+        JIEBA.cut_all(text).into_iter().map(|t| t.word).collect()
     }
 }
 
 impl PreTokenizer for JiebaPrecise {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        JIEBA.cut_all(text).into_iter().map(|t| t.word).collect()
+        JIEBA
+            .cut(text, self.enable_hmm)
+            .into_iter()
+            .map(|t| t.word)
+            .collect()
     }
 }
 
@@ -78,10 +81,10 @@ impl PreTokenizer for JiebaSearch {
 
 pub fn create_jieba_pre_tokenizer(config: JiebaConfig) -> PreTokenizerPtr {
     match config.mode {
-        JiebaMode::Full => Arc::new(JiebaFull {
+        JiebaMode::Full => Arc::new(JiebaFull),
+        JiebaMode::Precise => Arc::new(JiebaPrecise {
             enable_hmm: config.enable_hmm,
         }),
-        JiebaMode::Precise => Arc::new(JiebaPrecise),
         JiebaMode::Search => Arc::new(JiebaSearch {
             enable_hmm: config.enable_hmm,
         }),
@@ -90,4 +93,64 @@ pub fn create_jieba_pre_tokenizer(config: JiebaConfig) -> PreTokenizerPtr {
 
 pub fn init() {
     LazyLock::force(&JIEBA);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{create_jieba_pre_tokenizer, JiebaConfig, JiebaMode};
+
+    fn cut(mode: JiebaMode, enable_hmm: bool, text: &str) -> Vec<String> {
+        let pre_tokenizer = create_jieba_pre_tokenizer(JiebaConfig { mode, enable_hmm });
+        pre_tokenizer
+            .pre_tokenize(text)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn modes_follow_jieba() {
+        let text = "我来到北京清华大学";
+        assert_eq!(
+            cut(JiebaMode::Full, true, text),
+            [
+                "我",
+                "来",
+                "来到",
+                "到",
+                "北",
+                "北京",
+                "京",
+                "清",
+                "清华",
+                "清华大学",
+                "华",
+                "华大",
+                "大",
+                "大学",
+                "学"
+            ]
+        );
+        assert_eq!(
+            cut(JiebaMode::Precise, true, text),
+            ["我", "来到", "北京", "清华大学"]
+        );
+        assert_eq!(
+            cut(JiebaMode::Search, true, text),
+            ["我", "来到", "北京", "清华", "华大", "大学", "清华大学"]
+        );
+    }
+
+    #[test]
+    fn hmm_applies_to_precise_and_search_only() {
+        let text = "他来到了网易杭研大厦";
+        assert_ne!(
+            cut(JiebaMode::Precise, true, text),
+            cut(JiebaMode::Precise, false, text)
+        );
+        assert_eq!(
+            cut(JiebaMode::Full, true, text),
+            cut(JiebaMode::Full, false, text)
+        );
+    }
 }
