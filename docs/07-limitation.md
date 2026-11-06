@@ -21,6 +21,8 @@ SELECT apply_text_analyzer('hello', 'text_analyzer1'); -- raises "not found"
 If a tokenizer references an analyzer or model that is rebuilt under the same name, the dependent tokenizer cache is invalidated as well. Existing persisted embeddings or `tsvector` values are not rewritten automatically; recompute them when the definition changes.
 
 
+Physical replicas are not covered: definition changes replayed on a hot standby do not invalidate caches of existing standby sessions, which keep the old definitions until they reconnect, and promotion keeps existing session caches. New sessions read the replicated catalog. Reconnect standby sessions (or recycle pooled connections) after changing definitions on the primary.
+
 Definition-changing API calls cannot participate in a prepared transaction: `PREPARE TRANSACTION` raises an error. Use ordinary transactions for this DDL. Direct catalog-table edits are unsupported and do not publish cache invalidations; use the `create_*` / `drop_*` APIs.
 
 `apply_text_analyzer`, `tokenize`, and the native `tsvector` wrappers are `STABLE`, not immutable. Keep their output in ordinary columns maintained explicitly or by triggers. Do not use immutable wrappers to bypass PostgreSQL's expression-index/generated-column checks.
