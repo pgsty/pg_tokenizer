@@ -49,8 +49,8 @@ class PreloadTests(unittest.TestCase):
                     "-w", "-t", "30", action,
                 ], check=True, capture_output=True)
 
-            def connect(database="postgres"):
-                return psycopg.connect(host=str(root), user="postgres", dbname=database, autocommit=True)
+            def connect(database="postgres", user="postgres"):
+                return psycopg.connect(host=str(root), user=user, dbname=database, autocommit=True)
 
             def create_model(conn, number):
                 config = json.dumps({
@@ -58,6 +58,17 @@ class PreloadTests(unittest.TestCase):
                 })
                 conn.execute("SELECT tokenizer_catalog.create_huggingface_model('shared_model', %s)", (config,))
                 conn.execute("SELECT tokenizer_catalog.create_tokenizer('shared_tokenizer', 'model = \"shared_model\"')")
+
+            # A Lindera user dictionary is a server file: loading it needs
+            # pg_read_server_files, but the postmaster's preloaded object is
+            # reused by any role whose database has the same definition.
+            user_dictionary = root / "user_dictionary.csv"
+            user_dictionary.write_text("東京スカイツリー,カスタム名詞,トウキョウスカイツリー\n")
+            lindera = (
+                "[segmenter]\ndictionary = "
+                + json.dumps(os.environ.get("PG_TOKENIZER_TEST_LINDERA_DICTIONARY", "embedded://ipadic"))
+                + "\nuser_dictionary = " + json.dumps(str(user_dictionary))
+            )
 
             ctl("start")
             try:
@@ -67,7 +78,20 @@ class PreloadTests(unittest.TestCase):
                     create_model(conn, 11)
                     conn.execute("SELECT tokenizer_catalog.add_preload_model('shared_model')")
                     conn.execute("CREATE DATABASE other_database")
+                    conn.execute("CREATE ROLE lindera_owner LOGIN")
+                    conn.execute("CREATE DATABASE lindera_database OWNER lindera_owner")
+                with connect("lindera_database") as conn:
+                    conn.execute("CREATE EXTENSION pg_tokenizer")
+                    conn.execute("SELECT tokenizer_catalog.create_lindera_model('user_lindera', %s)", (lindera,))
+                    conn.execute("SELECT tokenizer_catalog.create_tokenizer('user_lindera', 'model = \"user_lindera\"')")
+                    conn.execute("SELECT tokenizer_catalog.add_preload_model('user_lindera')")
                 ctl("restart")
+                with connect("lindera_database", "lindera_owner") as conn:
+                    self.assertEqual(conn.execute(
+                        "SELECT tokenizer_catalog.tokenize('東京スカイツリー', 'user_lindera')"
+                    ).fetchone()[0], [1 << 30])
+                    with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                        conn.execute("SELECT tokenizer_catalog.create_lindera_model('owner_lindera', %s)", (lindera,))
                 with connect("other_database") as conn:
                     conn.execute("CREATE EXTENSION pg_tokenizer")
                     create_model(conn, 22)

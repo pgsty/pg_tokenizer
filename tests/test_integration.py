@@ -441,6 +441,67 @@ class IntegrationTests(unittest.TestCase):
             ).fetchone()[0]
         )
 
+    def test_lindera_file_dictionaries_require_privileges(self):
+        # A new backend loads models from the catalog. Only superusers and roles
+        # with privileges of pg_read_server_files may make Lindera open files.
+        path = self.admin.execute(
+            "SELECT current_setting('data_directory') || '/pg_tokenizer/test_user_dictionary.csv'"
+        ).fetchone()[0]
+        self.admin.execute(
+            sql.SQL("COPY (SELECT {}) TO {}").format(
+                sql.Literal("東京スカイツリー,カスタム名詞,トウキョウスカイツリー"),
+                sql.Literal(path),
+            )
+        )
+        dictionary = os.environ.get("PG_TOKENIZER_TEST_LINDERA_DICTIONARY", "embedded://ipadic")
+        config = (
+            f"[segmenter]\ndictionary = {json.dumps(dictionary)}\n"
+            f"user_dictionary = {json.dumps(path)}"
+        )
+        self.db.execute("SELECT create_lindera_model('user_dictionary', %s)", (config,))
+        self.db.execute("SELECT create_tokenizer('user_dictionary', 'model = \"user_dictionary\"')")
+        query = "SELECT tokenize('東京スカイツリー', 'user_dictionary')"
+        self.assertEqual(self.db.execute(query).fetchone()[0], [1 << 30])
+        embedded = dictionary.startswith("embedded://")
+        legacy = json.dumps({"lindera": {"segmenter": {
+            "dictionary": {"kind": "ipadic"} if embedded else {"path": dictionary},
+            "user_dictionary": {"path": path},
+        }}})
+        with self.connect(user=self.owner) as owner:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege) as refused:
+                owner.execute(query)
+            self.assertNotIn(path, str(refused.exception))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                owner.execute("SELECT create_lindera_model('owner_dictionary', %s)", (config,))
+            # Writing the catalog directly does not bypass the check.
+            owner.execute("INSERT INTO tokenizer_catalog.model VALUES ('owner_dml', %s)", (legacy,))
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                owner.execute("SELECT create_tokenizer('owner_dml', 'model = \"owner_dml\"')")
+            if embedded:
+                owner.execute(
+                    "SELECT create_lindera_model('owner_embedded', %s)",
+                    (f"[segmenter]\ndictionary = {json.dumps(dictionary)}",),
+                )
+        readers = f"tokenizer_readers_{self.dbname[-12:]}"
+        self.admin.execute(sql.SQL("CREATE ROLE {}").format(sql.Identifier(readers)))
+        self.addCleanup(
+            self.admin.execute, sql.SQL("DROP ROLE {}").format(sql.Identifier(readers))
+        )
+        self.admin.execute(
+            sql.SQL("GRANT pg_read_server_files TO {}").format(sql.Identifier(readers))
+        )
+        self.admin.execute(
+            sql.SQL("GRANT {} TO {}").format(sql.Identifier(readers), sql.Identifier(self.owner))
+        )
+        # Inherited membership applies to the next backend's loads.
+        with self.connect(user=self.owner) as owner:
+            self.assertEqual(owner.execute(query).fetchone()[0], [1 << 30])
+            owner.execute("SELECT create_tokenizer('owner_dml', 'model = \"owner_dml\"')")
+            self.assertEqual(
+                owner.execute("SELECT tokenize('東京スカイツリー', 'owner_dml')").fetchone()[0],
+                [1 << 30],
+            )
+
     def test_filter_validation_on_empty_corpus(self):
         self.db.execute("CREATE TABLE empty_corpus (body text, tenant int)")
         self.db.execute("SELECT create_text_analyzer('empty_analyzer', '')")

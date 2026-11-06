@@ -53,7 +53,7 @@ pig repo add pgsql -u
 pig ext add pg_tokenizer
 ```
 
-Native RPM/DEB builds do not embed Lindera dictionaries; supply a dictionary built with Lindera 6. GitHub release packages enable `lindera-ipadic` and include IPADIC. Other embedded dictionaries require their corresponding build features.
+Native RPM/DEB builds do not embed Lindera dictionaries; supply a dictionary built with Lindera 6. GitHub release packages enable `lindera-ipadic` and include IPADIC. Other embedded dictionaries require their corresponding build features. Lindera dictionary and user-dictionary files on the server can be loaded only by superusers and roles with the privileges of `pg_read_server_files`; see [database-owner permissions](docs/01-installation.md#database-owner-permissions).
 
 Then add `pg_tokenizer.so` to `shared_preload_libraries` and restart PostgreSQL:
 

@@ -28,6 +28,8 @@ We support importing models using [lindera](https://github.com/lindera/lindera) 
 
 Lindera 6.2 uses dictionary URIs such as `embedded://ipadic`, or filesystem paths for external dictionaries. Existing `[segmenter.dictionary] kind = "ipadic"` configurations in the catalog and preload files remain supported. Legacy dictionary `path` and user-dictionary `path` tables are also accepted; external compiled dictionaries must be rebuilt with Lindera 6.
 
+Dictionary paths and `file://` URIs, for both `dictionary` and `user_dictionary`, read files on the database server as the PostgreSQL operating-system user. Creating or loading such a model requires a superuser or a role with the privileges of `pg_read_server_files`; other roles get `permission denied to load a Lindera dictionary from a file` and can use `embedded://` dictionaries. The check applies whenever a backend loads the model, including the first use of an existing catalog row in a new session, so a role without that privilege can use an external-dictionary model only when it is preloaded or already loaded in its backend. See [database-owner permissions](01-installation.md#database-owner-permissions).
+
 The embedded IPADIC dictionary changes from the 2007-08-01 edition to the 2025-09-20 edition. Its token IDs differ from those produced by Lindera 0.42. After upgrading, regenerate stored Lindera token arrays and rebuild any indexes that consume them before mixing them with new query tokens. Unknown words continue to be omitted from the token IDs.
 
 ```sql

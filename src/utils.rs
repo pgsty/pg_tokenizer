@@ -6,7 +6,33 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use pgrx::{datum::DatumWithOid, pg_sys::panic::ErrorReportable, FromDatum, IntoDatum};
+use pgrx::{
+    datum::DatumWithOid,
+    pg_sys::{
+        errcodes::PgSqlErrorCode,
+        panic::{ErrorReport, ErrorReportable},
+    },
+    FromDatum, IntoDatum, PgLogLevel,
+};
+
+/// Raise a PostgreSQL ERROR with a SQLSTATE and optional DETAIL and HINT.
+#[track_caller]
+pub fn raise_error(
+    code: PgSqlErrorCode,
+    message: impl Into<String>,
+    detail: Option<String>,
+    hint: Option<&str>,
+) -> ! {
+    let mut report = ErrorReport::new(code, message.into(), "pg_tokenizer");
+    if let Some(detail) = detail {
+        report = report.set_detail(detail);
+    }
+    if let Some(hint) = hint {
+        report = report.set_hint(hint);
+    }
+    report.report(PgLogLevel::ERROR);
+    unreachable!("ERROR reports do not return")
+}
 
 pub fn spi_get_one<T>(query: &str, args: &[DatumWithOid]) -> Option<T>
 where
