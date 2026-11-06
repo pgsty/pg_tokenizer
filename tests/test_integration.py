@@ -726,6 +726,26 @@ class IntegrationTests(unittest.TestCase):
             0,
         )
 
+    def test_drop_custom_model_name_handling(self):
+        # Invalid and reserved names keep the 1.0.0 warning; a valid name that
+        # does not exist now warns instead of panicking. Tokenizers are kept.
+        self.db.execute("SELECT create_tokenizer('kept_tokenizer', 'model = \"bert_base_uncased\"')")
+        notices = []
+        self.db.add_notice_handler(
+            lambda d: notices.append((d.severity_nonlocalized, d.message_primary))
+        )
+        for name in ("1invalid", "bad-name", "llmlingua2", "missing_model"):
+            self.db.execute("SELECT drop_custom_model(%s)", (name,))
+        self.assertEqual(notices, [
+            ("WARNING", "Invalid model name: 1invalid, Details: Name must start with a letter"),
+            ("WARNING", "Invalid model name: bad-name, Details: Invalid character: -"),
+            ("WARNING", "Invalid model name: llmlingua2, Details: The name is reserved, please choose another name"),
+            ("WARNING", "Model not found: missing_model"),
+        ])
+        self.assertEqual(
+            self.db.execute("SELECT tokenize('hello', 'kept_tokenizer')").fetchone()[0], [7592]
+        )
+
     def test_drop_custom_model_after_source_table_drop(self):
         self.make_model(self.db, "dropped_source")
         self.db.execute("DROP TABLE dropped_source")

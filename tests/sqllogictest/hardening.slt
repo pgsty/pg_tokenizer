@@ -164,13 +164,25 @@ SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf
 ----
 22023 token ID 2147483648 of Hugging Face model "hf_vocab" is out of range for type integer +detail
 
+# Added tokens cannot carry an ID of their own: the library reassigns the
+# "id" of a token missing from the vocabulary, so this import succeeds and the
+# token gets the next ID after the vocabulary.
 query T
 SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_added',
-'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "big": 2147483648}, "unk_token": "[UNK]"},
-  "added_tokens": [{"id": 1, "content": "big", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true}]}')$q$);
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "added_tokens": [{"id": 2147483648, "content": "new", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true}]}')$q$);
 ----
-22023 token ID 2147483648 of Hugging Face model "hf_added" is out of range for type integer +detail
+no error
 
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('hf_added', 'model = "hf_added"');
+
+query T
+SELECT tokenizer_catalog.tokenize('new', 'hf_added');
+----
+{1}
+
+# Each special-token path below has a small vocabulary and no added tokens.
 query T
 SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_bert',
 '{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
@@ -195,6 +207,15 @@ SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf
     "special_tokens": {"[CLS]": {"id": "[CLS]", "ids": [2147483648], "tokens": ["[CLS]"]}}}}')$q$);
 ----
 22023 token ID 2147483648 of Hugging Face model "hf_template" is out of range for type integer +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_sequence',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "post_processor": {"type": "Sequence", "processors": [
+    {"type": "ByteLevel", "add_prefix_space": true, "trim_offsets": true, "use_regex": true},
+    {"type": "BertProcessing", "sep": ["[SEP]", 2], "cls": ["[CLS]", 2147483649]}]}}')$q$);
+----
+22023 token ID 2147483649 of Hugging Face model "hf_sequence" is out of range for type integer +detail
 
 # Rows stored before the import check still load; out-of-range IDs fail
 # clearly at tokenization.
