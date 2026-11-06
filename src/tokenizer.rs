@@ -125,6 +125,12 @@ fn get_tokenizer_from_database(name: &str) -> Option<TokenizerPtr> {
 
     let config: TokenizerConfig =
         serde_json::from_str(config_bytes).unwrap_or_else(|e| invalid_config("tokenizer", name, e));
+    // Validate like create_tokenizer: rows written directly to the catalog
+    // could otherwise combine text_analyzer with inline options, which
+    // Tokenizer::build would silently ignore.
+    if let Err(e) = config.validate() {
+        invalid_config("tokenizer", name, e);
+    }
     Some(Arc::new(Tokenizer::build(config)))
 }
 

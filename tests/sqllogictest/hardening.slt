@@ -90,6 +90,34 @@ SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize('x', 'broken_tokeni
 ----
 22023 invalid configuration for tokenizer "broken_tokenizer" +detail
 
+# A catalog row that combines text_analyzer with inline analyzer options is
+# rejected on load as on creation, instead of ignoring the inline options.
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('lazy_words', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+INSERT INTO tokenizer_catalog.tokenizer VALUES ('lazy_both',
+'{"text_analyzer": "lazy_words", "token_filters": [{"stopwords": "nltk_english"}], "model": "bert_base_uncased"}');
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize('the hello', 'lazy_both')$q$);
+----
+22023 invalid configuration for tokenizer "lazy_both" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize_to_tsvector('the hello', 'lazy_both')$q$);
+----
+22023 invalid configuration for tokenizer "lazy_both" +detail
+
+statement ok
+INSERT INTO tokenizer_catalog.tokenizer VALUES ('lazy_valid',
+'{"text_analyzer": "lazy_words", "model": "bert_base_uncased"}');
+
+query T
+SELECT tokenizer_catalog.tokenize('the hello', 'lazy_valid');
+----
+{1996,7592}
+
 query T
 SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_tokenizer('uses_broken', 'model = "broken_model"')$q$);
 ----
