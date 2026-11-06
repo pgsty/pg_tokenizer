@@ -67,9 +67,7 @@ impl TokenFilter for Ngram {
             for end in (start + min_gram)..=(start + max_gram).min(chars) {
                 results.push(token[bounds[start]..bounds[end]].to_string());
                 // A long token has very many grams; let a cancel stop it.
-                if results.len() % 1024 == 0 {
-                    crate::utils::check_for_interrupts();
-                }
+                crate::utils::check_for_interrupts_every(results.len());
             }
         }
         // A token whose length is in range is already one of the n-grams.
@@ -130,6 +128,15 @@ mod tests {
         assert!(ngram(1, 2, false).apply(String::new()).is_empty());
         assert_eq!(ngram(2, 3, true).apply("中".into()), ["中"]);
         assert_eq!(ngram(1, 2, true).apply(String::new()), [""]);
+    }
+
+    #[test]
+    fn checks_for_interrupts_every_1024_grams() {
+        use crate::utils::interrupt_tests::count_interrupt_checks;
+        let (grams, checks) =
+            count_interrupt_checks(|| ngram(1, 1, false).apply("a".repeat(10_000)));
+        assert_eq!(grams.len(), 10_000);
+        assert_eq!(checks, 10_000 / 1024);
     }
 
     #[test]

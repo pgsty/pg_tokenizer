@@ -92,6 +92,8 @@ impl TokenizerModel for HuggingFaceModel {
         self.tokenizer.apply(text)
     }
 
+    // tokenizers::Tokenizer has no apply_batch of its own: this is the
+    // default TokenizerModel loop, which checks for interrupts per token.
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
         self.tokenizer.apply_batch(tokens)
     }
@@ -196,21 +198,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn added_token_ids() {
-        // Added tokens take their vocabulary ID when the content exists.
-        let added = json!([{
-            "id": 1, "content": "big", "single_word": false, "lstrip": false,
+    fn added(content: &str, id: u64) -> Value {
+        json!([{
+            "id": id, "content": content, "single_word": false, "lstrip": false,
             "rstrip": false, "normalized": false, "special": true
-        }]);
-        let tokenizer = tokenizer(json!({"[UNK]": 0, "big": MAX + 1}), Value::Null, added);
-        assert!(tokenizer
-            .get_added_tokens_decoder()
-            .contains_key(&(MAX as u32 + 1)));
-        assert_eq!(
-            oversized_token_id(&tokenizer),
-            Some(("big".into(), MAX + 1))
+        }])
+    }
+
+    fn added_ids(tokenizer: &Tokenizer) -> Vec<u32> {
+        tokenizer.get_added_tokens_decoder().into_keys().collect()
+    }
+
+    // tokenizers 0.23 does not keep an added token's "id" from tokenizer.json:
+    // a token missing from the vocabulary gets the next ID after it, and one
+    // that names a vocabulary entry gets that entry's ID. An added token can
+    // therefore not carry an oversized ID of its own; these tests pin that
+    // down instead of re-testing the vocabulary check.
+    #[test]
+    fn added_token_ids_are_assigned_by_the_library() {
+        let small = tokenizer(json!({"[UNK]": 0}), Value::Null, added("new", MAX + 1));
+        assert_eq!(added_ids(&small), [1]);
+        assert_eq!(oversized_token_id(&small), None);
+        let named = tokenizer(
+            json!({"[UNK]": 0, "max": MAX}),
+            Value::Null,
+            added("max", 1),
         );
+        assert_eq!(added_ids(&named), [MAX as u32]);
+        assert_eq!(oversized_token_id(&named), None);
+    }
+
+    #[test]
+    fn batches_check_for_interrupts_per_token() {
+        use super::HuggingFaceModel;
+        use crate::{model::TokenizerModel, utils::interrupt_tests::count_interrupt_checks};
+        let model = HuggingFaceModel {
+            tokenizer: tokenizer(json!({"[UNK]": 0, "a": 1}), Value::Null, json!([])),
+        };
+        let (ids, checks) =
+            count_interrupt_checks(|| model.apply_batch(vec!["a".to_string(); 3000]));
+        assert_eq!(ids, vec![1; 3000]);
+        assert_eq!(checks, 3000);
     }
 
     #[test]

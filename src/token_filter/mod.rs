@@ -72,3 +72,17 @@ pub(crate) fn clear_caches() {
     stopwords::clear_cache();
     synonym::clear_cache();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{skip_non_alphanumeric::SkipNonAlphanumeric, TokenFilter};
+    use crate::utils::interrupt_tests::count_interrupt_checks;
+
+    #[test]
+    fn default_batch_checks_for_interrupts_per_token() {
+        let tokens = vec!["a".to_string(); 3000];
+        let (result, checks) = count_interrupt_checks(|| SkipNonAlphanumeric.apply_batch(tokens));
+        assert_eq!(result.len(), 3000);
+        assert_eq!(checks, 3000);
+    }
+}

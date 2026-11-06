@@ -28,9 +28,7 @@ fn _tokens_to_tsvector_text(tokens: Vec<String>) -> String {
     let mut slots: HashMap<String, usize> = HashMap::new();
     let mut position = 0;
     for (i, token) in tokens.into_iter().enumerate() {
-        if i % 1024 == 0 {
-            crate::utils::check_for_interrupts();
-        }
+        crate::utils::check_for_interrupts_every(i);
         // Like to_tsvector, skip words PostgreSQL cannot store as a lexeme.
         if token.is_empty() || token.len() > MAX_LEXEME_BYTES {
             continue;
@@ -154,6 +152,14 @@ mod tests {
                 positions(1..=256)
             )
         );
+    }
+
+    #[test]
+    fn checks_for_interrupts_every_1024_tokens() {
+        use crate::utils::interrupt_tests::count_interrupt_checks;
+        let (_, checks) =
+            count_interrupt_checks(|| _tokens_to_tsvector_text(vec!["x".to_string(); 3000]));
+        assert_eq!(checks, 3); // tokens 0, 1024 and 2048
     }
 
     #[test]

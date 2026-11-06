@@ -184,11 +184,12 @@ fn drop_tokenizer(name: &str) {
 pub fn tokenize(text: &str, tokenizer_name: &str) -> Vec<i32> {
     let tokenizer = get_tokenizer(tokenizer_name);
     let ids = tokenizer.tokenize(text);
-    crate::utils::check_for_interrupts();
     // Hugging Face imports reject larger IDs; models stored before that check
     // can still contain them.
     ids.into_iter()
-        .map(|id| {
+        .enumerate()
+        .map(|(i, id)| {
+            crate::utils::check_for_interrupts_every(i);
             i32::try_from(id).unwrap_or_else(|_| {
                 raise_error(
                     pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE,

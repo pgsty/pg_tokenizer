@@ -63,7 +63,8 @@ impl TokenizerModel for CustomModel {
             let tuptable = client
                 .select(&query, None, &[tokens.clone().into()])
                 .unwrap_or_report();
-            for tup in tuptable {
+            for (i, tup) in tuptable.enumerate() {
+                crate::utils::check_for_interrupts_every(i);
                 let id: i32 = tup.get(1).unwrap_or_report().expect("no id value");
                 let id = u32::try_from(id).expect("id is not a valid u32");
                 let token: String = tup.get(2).unwrap_or_report().expect("no token value");
@@ -73,7 +74,11 @@ impl TokenizerModel for CustomModel {
 
         tokens
             .into_iter()
-            .filter_map(|token| token_map.get(&token).copied())
+            .enumerate()
+            .filter_map(|(i, token)| {
+                crate::utils::check_for_interrupts_every(i);
+                token_map.get(&token).copied()
+            })
             .collect()
     }
 }

@@ -29,7 +29,7 @@ Definition-changing API calls cannot participate in a prepared transaction: `PRE
 
 ## Cancellation and resource use
 
-Statement timeouts and cancel requests are processed between analyzer stages, for each token in token filters and models, and every 1,024 n-grams. A single call into Jieba, Lindera, or a Hugging Face tokenizer for one long piece of text runs to completion before the cancel takes effect. Analyzer output is held in backend memory outside PostgreSQL's memory accounting, and there are no input, output, or expansion size limits yet: an n-gram filter with a large `max_gram` on long unsplit text produces very many grams. Bound input size in the application and use `statement_timeout`.
+Statement timeouts and cancel requests are processed between analyzer stages, for each token in token filters and models (every 1,024 tokens in custom-model lookups and output conversion), and every 1,024 n-grams. A single call into Jieba, Lindera, or a Hugging Face tokenizer for one long piece of text runs to completion before the cancel takes effect. Analyzer output is held in backend memory outside PostgreSQL's memory accounting, and there are no input, output, or expansion size limits yet: an n-gram filter with a large `max_gram` on long unsplit text produces very many grams. Bound input size in the application and use `statement_timeout`.
 
 ## Known SQL-level limitations
 

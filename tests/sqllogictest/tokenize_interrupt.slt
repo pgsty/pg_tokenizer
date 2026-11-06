@@ -1,0 +1,58 @@
+# A statement timeout stops tokenization inside the per-token model loop
+# instead of after the whole input.
+#
+# The elapsed bound is what detects a missing check: without one, the
+# statement is still canceled, but only after tokenization returns. Two
+# million tokens through bert_base_uncased take over 8 s on a fast machine
+# (longer on CI) and about 200 MB, so 2 s leaves room for a loaded runner
+# while the cancel itself takes milliseconds. A long n-gram run cannot serve
+# here: n-grams are materialized, so seconds of uninterrupted generation need
+# gigabytes; unit tests cover the n-gram and token-filter checks instead.
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('interrupt_words', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('interrupt_bert', $$
+text_analyzer = "interrupt_words"
+model = "bert_base_uncased"
+$$);
+
+# Load the model before the timed statement.
+query T
+SELECT tokenizer_catalog.tokenize('hello', 'interrupt_bert');
+----
+{7592}
+
+statement ok
+CREATE TEMP TABLE tokenize_cancel (elapsed interval);
+
+# The analyzer finishes well within the timeout; the cancel then arrives
+# while the model looks up the tokens.
+statement ok
+SET LOCAL statement_timeout = '500ms';
+
+statement ok
+DO $$
+DECLARE
+    started timestamptz := clock_timestamp();
+BEGIN
+    PERFORM tokenizer_catalog.tokenize(repeat('supernovae bookings ', 1000000), 'interrupt_bert');
+    RAISE EXCEPTION 'tokenization was not interrupted';
+EXCEPTION WHEN query_canceled THEN
+    INSERT INTO tokenize_cancel VALUES (clock_timestamp() - started);
+END $$;
+
+statement ok
+SET LOCAL statement_timeout = 0;
+
+query T
+SELECT elapsed < interval '2 seconds' FROM tokenize_cancel;
+----
+t
+
+statement ok
+ROLLBACK;
