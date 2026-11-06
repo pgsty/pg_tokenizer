@@ -25,6 +25,10 @@ Definition-changing API calls cannot participate in a prepared transaction: `PRE
 
 `apply_text_analyzer`, `tokenize`, and the native `tsvector` wrappers are `STABLE`, not immutable. Keep their output in ordinary columns maintained explicitly or by triggers. Do not use immutable wrappers to bypass PostgreSQL's expression-index/generated-column checks.
 
+## Cancellation and resource use
+
+Statement timeouts and cancel requests are processed between analyzer stages, for each token in token filters and models, and every 1,024 n-grams. A single call into Jieba, Lindera, or a Hugging Face tokenizer for one long piece of text runs to completion before the cancel takes effect. Analyzer output is held in backend memory outside PostgreSQL's memory accounting, and there are no input, output, or expansion size limits yet: an n-gram filter with a large `max_gram` on long unsplit text produces very many grams. Bound input size in the application and use `statement_timeout`.
+
 ## Logical backups
 
 The five definition tables (`text_analyzer`, `tokenizer`, `model`, `stopwords`, `synonym`) are registered with `pg_extension_config_dump`, so an ordinary `pg_dump` includes their rows together with custom vocabulary tables, their identity sequences, and source-table triggers. `CREATE EXTENSION` recreates the shipped `lucene_english`, `nltk_english`, and `iso_english` stopword lists, so those three names are not dumped. They are reserved and cannot be dropped or replaced, so a restore recreates the same lists.

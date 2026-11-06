@@ -19,7 +19,7 @@ use crate::{
     character_filter::{get_character_filter, CharacterFilterConfig, CharacterFilterPtr},
     pre_tokenizer::{get_pre_tokenizer, PreTokenizerConfig, PreTokenizerPtr},
     token_filter::{get_token_filter, TokenFilterConfig, TokenFilterPtr},
-    utils::spi_get_one,
+    utils::{check_for_interrupts, spi_get_one},
 };
 
 #[derive(Clone, Serialize, Deserialize, Validate)]
@@ -62,22 +62,28 @@ impl TextAnalyzer {
     }
 
     pub fn apply(&self, text: &str) -> Vec<String> {
+        // Let a statement timeout or cancel stop the pipeline between stages;
+        // token filters also check per token.
         let mut text = Cow::Borrowed(text);
         for filter in &self.character_filters {
+            check_for_interrupts();
             filter.apply(&mut text);
         }
 
+        check_for_interrupts();
         let text = text.as_ref();
         let pre_tokenized = match &self.pre_tokenizer {
             Some(pre_tokenizer) => pre_tokenizer.pre_tokenize(text),
             None => vec![text],
         };
+        check_for_interrupts();
         let mut tokens = pre_tokenized
             .into_iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
 
         for filter in &self.token_filters {
+            check_for_interrupts();
             tokens = filter.apply_batch(tokens);
         }
 

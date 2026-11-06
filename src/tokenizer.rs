@@ -179,9 +179,7 @@ fn drop_tokenizer(name: &str) {
 #[pgrx::pg_extern(stable, parallel_safe)]
 pub fn tokenize(text: &str, tokenizer_name: &str) -> Vec<i32> {
     let tokenizer = get_tokenizer(tokenizer_name);
-    tokenizer
-        .tokenize(text)
-        .into_iter()
-        .map(|x| x.try_into().unwrap())
-        .collect()
+    let ids = tokenizer.tokenize(text);
+    crate::utils::check_for_interrupts();
+    ids.into_iter().map(|x| x.try_into().unwrap()).collect()
 }

@@ -1,0 +1,40 @@
+# A statement timeout stops an n-gram analysis of one very long token
+# promptly instead of after all 25 million grams are generated, which takes
+# over a second (and gigabytes of memory) even on fast machines.
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('ngram_huge', $$
+[[token_filters]]
+ngram = { min_gram = 1, max_gram = 255 }
+$$);
+
+statement ok
+CREATE TEMP TABLE ngram_cancel (elapsed interval);
+
+statement ok
+SET LOCAL statement_timeout = '100ms';
+
+statement ok
+DO $$
+DECLARE
+    started timestamptz := clock_timestamp();
+BEGIN
+    PERFORM tokenizer_catalog.apply_text_analyzer(repeat('a', 100000), 'ngram_huge');
+    RAISE EXCEPTION 'the n-gram analysis was not interrupted';
+EXCEPTION WHEN query_canceled THEN
+    INSERT INTO ngram_cancel VALUES (clock_timestamp() - started);
+END $$;
+
+statement ok
+SET LOCAL statement_timeout = 0;
+
+query T
+SELECT elapsed < interval '500 milliseconds' FROM ngram_cancel;
+----
+t
+
+statement ok
+ROLLBACK;

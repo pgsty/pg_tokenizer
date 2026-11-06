@@ -26,10 +26,12 @@ pub trait TokenizerModel {
     fn apply(&self, token: String) -> Vec<u32>;
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
-        tokens
-            .into_iter()
-            .flat_map(|token| self.apply(token))
-            .collect()
+        let mut ids = Vec::new();
+        for token in tokens {
+            crate::utils::check_for_interrupts();
+            ids.extend(self.apply(token));
+        }
+        ids
     }
 }
 pub type TokenizerModelPtr = Arc<dyn TokenizerModel + Send + Sync>;

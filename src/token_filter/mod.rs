@@ -21,14 +21,18 @@ use serde::{Deserialize, Serialize};
 use skip_non_alphanumeric::SkipNonAlphanumeric;
 use stemmer::{StemmerKind, StemmerTokenFilter};
 
+use crate::utils::check_for_interrupts;
+
 pub trait TokenFilter {
     fn apply(&self, token: String) -> Vec<String>;
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
-        tokens
-            .into_iter()
-            .flat_map(|token| self.apply(token))
-            .collect()
+        let mut results = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            check_for_interrupts();
+            results.extend(self.apply(token));
+        }
+        results
     }
 }
 pub type TokenFilterPtr = Arc<dyn TokenFilter + Sync + Send>;

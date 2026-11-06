@@ -36,10 +36,29 @@ extern "C-unwind" fn _PG_init() {
     if unsafe { pgrx::pg_sys::IsUnderPostmaster } {
         pgrx::error!("pg_tokenizer must be loaded via shared_preload_libraries.");
     }
+    IS_MAIN.set(true);
+    // Library worker threads must never call into PostgreSQL.
+    utils::install_interrupt_check(|| {
+        if is_main() {
+            pgrx::check_for_interrupts!();
+        }
+    });
 
     cache::init();
     pre_tokenizer::init();
     model::init();
+}
+
+thread_local! {
+    // Set on the thread that ran _PG_init; backends inherit it with fork.
+    static IS_MAIN: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+// Whether this is the backend's main thread, the only thread that may call
+// PostgreSQL.
+#[must_use]
+fn is_main() -> bool {
+    IS_MAIN.get()
 }
 
 #[cfg(test)]

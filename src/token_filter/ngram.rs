@@ -66,6 +66,10 @@ impl TokenFilter for Ngram {
         for start in 0..(chars + 1).saturating_sub(min_gram) {
             for end in (start + min_gram)..=(start + max_gram).min(chars) {
                 results.push(token[bounds[start]..bounds[end]].to_string());
+                // A long token has very many grams; let a cancel stop it.
+                if results.len() % 1024 == 0 {
+                    crate::utils::check_for_interrupts();
+                }
             }
         }
         // A token whose length is in range is already one of the n-grams.

@@ -27,7 +27,10 @@ fn _tokens_to_tsvector_text(tokens: Vec<String>) -> String {
     let mut lexemes: Vec<(String, Vec<usize>)> = Vec::new();
     let mut slots: HashMap<String, usize> = HashMap::new();
     let mut position = 0;
-    for token in tokens {
+    for (i, token) in tokens.into_iter().enumerate() {
+        if i % 1024 == 0 {
+            crate::utils::check_for_interrupts();
+        }
         // Like to_tsvector, skip words PostgreSQL cannot store as a lexeme.
         if token.is_empty() || token.len() > MAX_LEXEME_BYTES {
             continue;

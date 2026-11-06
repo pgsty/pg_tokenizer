@@ -6,6 +6,8 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
+use std::sync::OnceLock;
+
 use pgrx::{
     datum::DatumWithOid,
     pg_sys::{
@@ -32,6 +34,22 @@ pub fn raise_error(
     }
     report.report(PgLogLevel::ERROR);
     unreachable!("ERROR reports do not return")
+}
+
+static INTERRUPT_CHECK: OnceLock<fn()> = OnceLock::new();
+
+/// Installed by _PG_init. Unit tests never run it, so their executables do not
+/// reference PostgreSQL symbols through check_for_interrupts.
+pub fn install_interrupt_check(check: fn()) {
+    let _ = INTERRUPT_CHECK.set(check);
+}
+
+/// Process a pending query cancel or statement timeout. Call it only where no
+/// lock or other resource needs explicit release.
+pub fn check_for_interrupts() {
+    if let Some(check) = INTERRUPT_CHECK.get() {
+        check();
+    }
 }
 
 pub fn spi_get_one<T>(query: &str, args: &[DatumWithOid]) -> Option<T>
