@@ -1,0 +1,96 @@
+# Each lexeme is emitted once with its positions, so tsvector input stays
+# within PostgreSQL's 1 MB limit while producing the same tsvector as one
+# entry per token occurrence did.
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('agg_words', $$
+pre_tokenizer = "unicode_segmentation"
+[[character_filters]]
+to_lowercase = {}
+$$);
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('agg_raw', '');
+
+# The previous text form: one 'lexeme':position entry per occurrence.
+statement ok
+CREATE FUNCTION pg_temp.per_occurrence(tokens text[]) RETURNS pg_catalog.tsvector
+LANGUAGE sql IMMUTABLE AS $$
+SELECT coalesce(string_agg(
+    '''' || replace(replace(t, '\', '\\'), '''', '''''') || ''':' || least(n, 16383), ' ' ORDER BY n), '')::pg_catalog.tsvector
+FROM (SELECT t, row_number() OVER (ORDER BY o) AS n
+      FROM unnest(tokens) WITH ORDINALITY AS u(t, o)
+      WHERE t <> '' AND octet_length(t) <= 2046) AS kept
+$$;
+
+query IT
+SELECT n, tokenizer_catalog.analyze_to_tsvector(repeat('cat ', n) || 'dog', 'agg_words')
+    = pg_temp.per_occurrence(tokenizer_catalog.apply_text_analyzer(repeat('cat ', n) || 'dog', 'agg_words'))
+FROM (VALUES (1), (255), (256), (257), (16382), (16383), (16384), (20000)) AS v(n) ORDER BY n;
+----
+1 t
+255 t
+256 t
+257 t
+16382 t
+16383 t
+16384 t
+20000 t
+
+query II
+SELECT cardinality(positions), positions[cardinality(positions)]
+FROM unnest(tokenizer_catalog.analyze_to_tsvector(repeat('cat ', 257), 'agg_words')) WHERE lexeme = 'cat';
+----
+256 256
+
+# A lexeme first seen after position 16383 is still emitted, at 16383.
+query T
+SELECT positions FROM unnest(tokenizer_catalog.analyze_to_tsvector(repeat('cat ', 20000) || 'dog', 'agg_words'))
+WHERE lexeme = 'dog';
+----
+{16383}
+
+query T
+SELECT positions FROM unnest(tokenizer_catalog.analyze_to_tsvector(repeat('cat ', 16381) || 'dog cat dog', 'agg_words'))
+WHERE lexeme = 'dog';
+----
+{16382,16383}
+
+# Quotes, backslashes, whitespace and Unicode in lexemes.
+query T
+SELECT tokenizer_catalog._tokens_to_tsvector_text(ARRAY['a''b', 'c\d', '中文', 'a''b', 'e f', '', '中文'])::pg_catalog.tsvector
+    = pg_temp.per_occurrence(ARRAY['a''b', 'c\d', '中文', 'a''b', 'e f', '', '中文']);
+----
+t
+
+query T
+SELECT rtrim(tokenizer_catalog._tokens_to_tsvector_text(ARRAY['a''b', 'c\d', '中文', 'a''b', 'e f', '', '中文']));
+----
+'a''b':1,4 'c\\d':2 '中文':3,6 'e f':5
+
+query T
+SELECT tsvector_to_array(tokenizer_catalog.analyze_to_tsvector($$x'y\z x'y$$, 'agg_raw'));
+----
+{"x'y\\z x'y"}
+
+# Repetition beyond the parser's 1 MB limit; the result itself is small.
+query III
+SELECT length(v), cardinality(tsvector_to_array(v)), (SELECT cardinality(positions) FROM unnest(v))
+FROM (SELECT tokenizer_catalog.analyze_to_tsvector(repeat('the ', 400000), 'agg_words') AS v) AS s;
+----
+1 1 256
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('agg_bert', 'model = "bert_base_uncased"');
+
+query T
+SELECT tokenizer_catalog.tokenize_to_tsvector(repeat('hello ', 400000), 'agg_bert')
+    = ('''7592'':' || (SELECT string_agg(g::text, ',') FROM generate_series(1, 256) g))::pg_catalog.tsvector;
+----
+t
+
+statement ok
+ROLLBACK;
