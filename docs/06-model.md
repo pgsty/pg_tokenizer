@@ -153,6 +153,10 @@ The filter applies to the initial vocabulary scan, embedding backfill, and futur
 
 Omitting `filter` (or passing SQL `NULL` to the helper) retains the whole-table behavior. Existing models and six-argument helper calls remain supported. Schema-qualified table names and quoted column names are supported; the stored table name is qualified when the model is created. Qualified names take precedence over a literal name containing a dot; use SQL double quotes (for example, `'"corpus.docs"'`) to select the latter explicitly.
 
+### Source and target column types
+
+The embedding trigger reads the source column as `source::text`, like model creation and the vocabulary trigger, so `char(n)`, `varchar`, `citext`, and other types with a cast to `text` work as sources. It assigns the `integer[]` result to the target column the way `INSERT` and `UPDATE` assign values: PostgreSQL assignment coercion to the column's type and type modifier, including domain `NOT NULL` and `CHECK` constraints (also when a NULL source produces a NULL embedding) and length limits. A target such as `varchar(20)` therefore raises `value too long` instead of storing an over-long value, and a target type without an assignment cast from `integer[]` raises an error. In 1.0.0, a non-text source such as `char(n)` failed with `source column is missing`, a NULL source bypassed domain constraints, and non-`integer[]` targets lost their type modifier.
+
 ### Example
 
 with trigger (convenient):

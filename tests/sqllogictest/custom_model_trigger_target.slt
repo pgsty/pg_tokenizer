@@ -1,0 +1,182 @@
+# The target trigger reads the source through ::text and assigns its result
+# with PostgreSQL assignment coercion to the target column's type and typmod.
+
+statement ok
+BEGIN;
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('target_words', 'pre_tokenizer = "unicode_segmentation"');
+
+# A char(n) source column, read as text like model creation does.
+statement ok
+CREATE TABLE target_char (id int, passage char(12), embedding int[]);
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    'target_char', 'target_char', 'target_words', 'target_char', 'passage', 'embedding');
+
+statement ok
+INSERT INTO target_char VALUES (1, 'alpha beta', NULL), (2, 'beta', NULL), (3, NULL, '{9}');
+
+query ITT
+SELECT id, embedding, embedding = tokenizer_catalog.tokenize(passage::text, 'target_char') FROM target_char ORDER BY id;
+----
+1 {1,2} t
+2 {2} t
+3 NULL NULL
+
+# varchar(n): assignment semantics raise "value too long" instead of truncating.
+statement ok
+CREATE TABLE target_varchar (id int, passage text, embedding varchar(5));
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    'target_varchar', 'target_varchar', 'target_words', 'target_varchar', 'passage', 'embedding');
+
+statement ok
+INSERT INTO target_varchar VALUES (1, 'alpha', NULL), (2, 'alpha beta', NULL);
+
+statement ok
+SAVEPOINT too_long;
+
+statement error value too long for type character varying\(5\)
+INSERT INTO target_varchar VALUES (3, 'alpha beta gamma', NULL);
+
+statement ok
+ROLLBACK TO SAVEPOINT too_long;
+
+# The failed row's vocabulary was rolled back (its identity value is not
+# reused); later rows still work.
+statement ok
+INSERT INTO target_varchar VALUES (4, 'beta', NULL), (5, 'gamma', NULL);
+
+query IT
+SELECT id, embedding FROM target_varchar ORDER BY id;
+----
+1 {1}
+2 {1,2}
+4 {2}
+5 {4}
+
+# Domains: NOT NULL applies to a NULL source, CHECK to every result.
+statement ok
+CREATE DOMAIN target_ids_not_null AS int[] NOT NULL;
+
+statement ok
+CREATE DOMAIN target_ids_short AS int[] CHECK (cardinality(VALUE) <= 2);
+
+statement ok
+CREATE TABLE target_domains (id int, passage text, required target_ids_not_null, short target_ids_short);
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('target_domain_words', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    'target_required', 'target_required', 'target_domain_words', 'target_domains', 'passage', 'required');
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('target_short', $$
+text_analyzer = "target_domain_words"
+model = "target_required"
+$$);
+
+statement ok
+CREATE TRIGGER target_short_trigger BEFORE INSERT OR UPDATE OF passage ON target_domains FOR EACH ROW
+EXECUTE FUNCTION tokenizer_catalog.custom_model_tokenizer_set_target_column_trigger('target_short', 'passage', 'short');
+
+statement ok
+INSERT INTO target_domains VALUES (1, 'one two', '{}', NULL);
+
+statement ok
+SAVEPOINT domains;
+
+statement error domain target_ids_not_null does not allow null values
+INSERT INTO target_domains VALUES (2, NULL, '{}', NULL);
+
+statement ok
+ROLLBACK TO SAVEPOINT domains;
+
+statement error value for domain target_ids_short violates check constraint "target_ids_short_check"
+INSERT INTO target_domains VALUES (3, 'one two three', '{}', NULL);
+
+statement ok
+ROLLBACK TO SAVEPOINT domains;
+
+statement error domain target_ids_not_null does not allow null values
+UPDATE target_domains SET passage = NULL WHERE id = 1;
+
+statement ok
+ROLLBACK TO SAVEPOINT domains;
+
+query ITT
+SELECT id, required, short FROM target_domains ORDER BY id;
+----
+1 {1,2} {1,2}
+
+# Text targets: the I/O coercion honours a domain's collation and CHECK.
+statement ok
+CREATE DOMAIN target_c_text AS text COLLATE "C" CHECK (VALUE > 'Z' AND length(VALUE) <= 5);
+
+statement ok
+CREATE TABLE target_texts (id int, passage text, as_text text, as_domain target_c_text, as_bigint bigint[]);
+
+statement ok
+SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
+    'target_text', 'target_text', 'target_words', 'target_texts', 'passage', 'as_text');
+
+statement ok
+CREATE TRIGGER target_text_domain BEFORE INSERT ON target_texts FOR EACH ROW
+EXECUTE FUNCTION tokenizer_catalog.custom_model_tokenizer_set_target_column_trigger('target_text', 'passage', 'as_domain');
+
+statement ok
+CREATE TRIGGER target_text_bigint BEFORE INSERT ON target_texts FOR EACH ROW
+EXECUTE FUNCTION tokenizer_catalog.custom_model_tokenizer_set_target_column_trigger('target_text', 'passage', 'as_bigint');
+
+# Repeated evaluation within one statement and after an error.
+statement ok
+INSERT INTO target_texts (id, passage) SELECT g, 'red green' FROM generate_series(1, 50) g;
+
+statement ok
+SAVEPOINT texts;
+
+statement error value for domain target_c_text violates check constraint "target_c_text_check"
+INSERT INTO target_texts (id, passage) VALUES (51, 'red green blue');
+
+statement ok
+ROLLBACK TO SAVEPOINT texts;
+
+statement ok
+INSERT INTO target_texts (id, passage) VALUES (52, 'green');
+
+query TTTIT
+SELECT as_text, as_domain, as_bigint::text, count(*), pg_typeof(as_bigint)::text FROM target_texts
+GROUP BY 1, 2, 3, 5 ORDER BY 4;
+----
+{1} {1} {1} 1 bigint[]
+{2,1} {2,1} {2,1} 50 bigint[]
+
+query T
+SELECT pg_collation_for(as_domain) FROM target_texts LIMIT 1;
+----
+"C"
+
+# Unsupported target types are reported clearly.
+statement ok
+CREATE TABLE target_bad (passage text, embedding point);
+
+statement ok
+CREATE TRIGGER target_bad_trigger BEFORE INSERT ON target_bad FOR EACH ROW
+EXECUTE FUNCTION tokenizer_catalog.custom_model_tokenizer_set_target_column_trigger('target_text', 'passage', 'embedding');
+
+statement ok
+SAVEPOINT bad;
+
+statement error tokenizer output of type integer\[\] cannot be assigned to a target column of type point
+INSERT INTO target_bad VALUES ('red', NULL);
+
+statement ok
+ROLLBACK TO SAVEPOINT bad;
+
+statement ok
+ROLLBACK;

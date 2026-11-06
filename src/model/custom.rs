@@ -9,14 +9,17 @@
 use std::{collections::HashMap, ffi::CStr, sync::Arc};
 
 use pgrx::{
-    pg_sys::panic::ErrorReportable,
+    pg_sys::{self, errcodes::PgSqlErrorCode, panic::ErrorReportable},
     prelude::PgHeapTuple,
     spi::{quote_identifier, quote_literal},
-    WhoAllocated,
+    IntoDatum, WhoAllocated,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{text_analyzer::get_text_analyzer, utils::spi_get_one};
+use crate::{
+    text_analyzer::get_text_analyzer,
+    utils::{raise_error, spi_get_one},
+};
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
 
@@ -399,8 +402,6 @@ fn create_custom_model_tokenizer_and_trigger(
 fn custom_model_tokenizer_set_target_column_trigger<'a>(
     trigger: &'a pgrx::PgTrigger<'a>,
 ) -> Result<Option<PgHeapTuple<'a, impl WhoAllocated>>, ()> {
-    use pgrx::IntoDatum;
-
     let mut new = trigger.new().expect("new tuple is missing").into_owned();
     let tg_argv = trigger.extra_args().expect("trigger arguments are missing");
     if !(3..=4).contains(&tg_argv.len()) {
@@ -409,15 +410,17 @@ fn custom_model_tokenizer_set_target_column_trigger<'a>(
     let tokenizer_name = &tg_argv[0];
     let source_column = &tg_argv[1];
     let target_column = &tg_argv[2];
-
-    if let Some(filter) = tg_argv.get(3) {
+    let row = || {
         let row = trigger.new().expect("new tuple is missing");
         let oid = row.composite_type_oid().expect("row type is missing");
         // SAFETY: the OID comes from this exact composite tuple's descriptor.
-        let row = unsafe { pgrx::datum::DatumWithOid::new(row, oid) };
+        unsafe { pgrx::datum::DatumWithOid::new(row, oid) }
+    };
+
+    if let Some(filter) = tg_argv.get(3) {
         let matches = spi_get_one::<bool>(
             &format!("SELECT ({filter}) IS TRUE FROM (SELECT ($1).*) AS document"),
-            &[row],
+            &[row()],
         )
         .unwrap();
         if !matches {
@@ -426,86 +429,133 @@ fn custom_model_tokenizer_set_target_column_trigger<'a>(
         }
     }
 
-    let source = new
-        .get_by_name::<&str>(source_column)
-        .expect("source column is missing");
-    let Some(source) = source else {
-        unsafe {
-            new.set_by_index_unchecked(
-                new.get_attribute_by_name(target_column)
-                    .expect("target column is missing")
-                    .0,
-                None,
-            )
-        };
-        return Ok(Some(new));
-    };
-
     // A preceding vocabulary trigger may have waited for another transaction.
     // Use a read-write SPI call so READ COMMITTED gets a fresh snapshot that can
     // see that writer's committed IDs as well as our own newly inserted tokens.
-    let target: Vec<i32> = pgrx::Spi::connect_mut(|client| {
+    // Read the source like model creation and the vocabulary trigger do, with
+    // a ::text cast, so non-text source columns such as char(n) work too. A
+    // NULL source gives a NULL result (tokenize is STRICT).
+    let query = format!(
+        "SELECT tokenizer_catalog.tokenize((($1).{})::pg_catalog.text, $2)",
+        quote_identifier(source_column)
+    );
+    let target: Option<Vec<i32>> = pgrx::Spi::connect_mut(|client| {
         client
-            .update(
-                "SELECT tokenizer_catalog.tokenize($1, $2)",
-                Some(1),
-                &[source.into(), tokenizer_name.as_str().into()],
-            )
+            .update(&query, Some(1), &[row(), tokenizer_name.as_str().into()])
             .unwrap_or_report()
             .first()
             .get_one()
             .unwrap_or_report()
-            .expect("tokenizer result is missing")
     });
     let (idx, att) = new
         .get_attribute_by_name(target_column)
-        .expect("get target column failed");
-    let attoid = att.type_oid().value();
-    if Vec::<i32>::is_compatible_with(attoid) {
-        new.set_by_index(idx, target)
-            .expect("set target column failed");
+        .expect("target column is missing");
+    let value = if att.atttypid == pg_sys::INT4ARRAYOID {
+        // Assignment coercion of int4[] to int4[] is the identity.
+        target.and_then(IntoDatum::into_datum)
     } else {
-        let target_casted = pgrx::Spi::connect(|client| {
-            client
-                .select(
-                    &format!("SELECT $1::{}", lookup_type_name(attoid)),
-                    Some(1),
-                    &[target.into()],
-                )
-                .unwrap_or_report();
-
-            unsafe {
-                let table = pgrx::pg_sys::SPI_tuptable.as_mut().unwrap();
-                if table.numvals != 1 {
-                    panic!("unexpected number of tuples returned");
-                }
-                let heap_tuple = *(table.vals);
-                let heap_tuple = pgrx::pg_sys::SPI_copytuple(heap_tuple);
-
-                let mut is_null = false;
-                let datum = pgrx::pg_sys::SPI_getbinval(heap_tuple, table.tupdesc, 1, &mut is_null);
-
-                if is_null {
-                    panic!("unexpected null value");
-                }
-                datum
-            }
-        });
-        unsafe { new.set_by_index_unchecked(idx, Some(target_casted)) };
-    }
-
+        assign_target(target, att.atttypid, att.atttypmod)
+    };
+    // SAFETY: the value has the type of the target column, as coerced above.
+    unsafe { new.set_by_index_unchecked(idx, value) };
     Ok(Some(new))
 }
 
-fn lookup_type_name(oid: pgrx::pg_sys::Oid) -> String {
+// Convert the tokenizer output to the target column the way INSERT and UPDATE
+// assign values: PostgreSQL assignment coercion to the column's type and
+// typmod, so domain NOT NULL/CHECK constraints (also for NULL) and length
+// limits apply. PostgreSQL does not repeat this for a BEFORE trigger's tuple.
+fn assign_target(
+    target: Option<Vec<i32>>,
+    target_type: pg_sys::Oid,
+    target_typmod: i32,
+) -> Option<pg_sys::Datum> {
     unsafe {
-        // SAFETY: nothing to concern ourselves with other than just calling into Postgres FFI
-        // and Postgres will raise an ERROR if we pass it an invalid Oid, so it'll never return a null
-        let cstr_name = pgrx::pg_sys::format_type_extended(oid, -1, 0);
-        let cstr = CStr::from_ptr(cstr_name);
-        let typname = cstr.to_string_lossy().to_string();
-        pgrx::pg_sys::pfree(cstr_name as _); // don't leak the palloc'd cstr_name
-        typname
+        let isnull = target.is_none();
+        let datum = target
+            .and_then(IntoDatum::into_datum)
+            .unwrap_or(pg_sys::Datum::from(0));
+        let source = pg_sys::makeConst(
+            pg_sys::INT4ARRAYOID,
+            -1,
+            pg_sys::InvalidOid,
+            -1,
+            datum,
+            isnull,
+            false,
+        );
+        let expr = pg_sys::coerce_to_target_type(
+            std::ptr::null_mut(),
+            source.cast(),
+            pg_sys::INT4ARRAYOID,
+            target_type,
+            target_typmod,
+            pg_sys::CoercionContext::COERCION_ASSIGNMENT,
+            pg_sys::CoercionForm::COERCE_IMPLICIT_CAST,
+            -1,
+        );
+        if expr.is_null() {
+            raise_error(
+                PgSqlErrorCode::ERRCODE_DATATYPE_MISMATCH,
+                format!(
+                    "tokenizer output of type integer[] cannot be assigned to a target column of type {}",
+                    format_type(target_type, target_typmod)
+                ),
+                None,
+                Some("Use an integer[] target column or a type with an assignment cast from integer[]."),
+            );
+        }
+        pg_sys::assign_expr_collations(std::ptr::null_mut(), expr);
+        let estate = ExecutorState::new();
+        let state = pg_sys::ExecPrepareExpr(expr.cast(), estate.0);
+        let econtext = pg_sys::MakePerTupleExprContext(estate.0);
+        let mut isnull = false;
+        let result = pg_sys::ExecEvalExprSwitchContext(state, econtext, &mut isnull);
+        if isnull {
+            return None;
+        }
+        // Copy into the trigger's memory context before the executor state,
+        // which owns the result, is freed.
+        let mut typlen = 0;
+        let mut typbyval = false;
+        pg_sys::get_typlenbyval(target_type, &mut typlen, &mut typbyval);
+        Some(pg_sys::datumCopy(result, typbyval, typlen.into()))
+    }
+}
+
+// Owns an EState and frees it on every exit path.
+struct ExecutorState(*mut pg_sys::EState);
+
+impl ExecutorState {
+    fn new() -> Self {
+        Self(unsafe { pg_sys::CreateExecutorState() })
+    }
+}
+
+impl Drop for ExecutorState {
+    fn drop(&mut self) {
+        unsafe {
+            if std::thread::panicking() {
+                // Unwinding from an ERROR: like an aborting transaction, free
+                // the memory without running expression shutdown callbacks.
+                while !(*self.0).es_exprcontexts.is_null() {
+                    let first = (*(*(*self.0).es_exprcontexts).elements).ptr_value;
+                    pg_sys::FreeExprContext(first.cast(), false);
+                }
+                pg_sys::MemoryContextDelete((*self.0).es_query_cxt);
+            } else {
+                pg_sys::FreeExecutorState(self.0);
+            }
+        }
+    }
+}
+
+fn format_type(oid: pg_sys::Oid, typmod: i32) -> String {
+    unsafe {
+        let name = pg_sys::format_type_with_typemod(oid, typmod);
+        let result = CStr::from_ptr(name).to_string_lossy().into_owned();
+        pg_sys::pfree(name.cast());
+        result
     }
 }
 
