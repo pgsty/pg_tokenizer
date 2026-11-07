@@ -1060,9 +1060,21 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT tokenize('alpha beta','race')").fetchone()[0], [1, 2])
 
     def test_upgrade_from_100_serializes_custom_model_creation(self):
+        self.creation_during_upgrade()
+
+    def test_upgrade_from_100_retries_repeatable_creator(self):
+        self.creation_during_upgrade('REPEATABLE READ')
+
+    def test_upgrade_from_100_retries_serializable_creator(self):
+        self.creation_during_upgrade('SERIALIZABLE')
+
+    def creation_during_upgrade(self, isolation=None):
         self.db.execute("CREATE TABLE during_upgrade(body text)")
         self.db.execute("SELECT create_text_analyzer('during_upgrade','')")
         with self.connect() as creator:
+            if isolation:
+                creator.execute(f'BEGIN ISOLATION LEVEL {isolation}')
+                creator.execute('SELECT count(*) FROM tokenizer_catalog.model')
             self.db.execute('BEGIN')
             self.db.execute('LOCK TABLE tokenizer_catalog.model IN SHARE ROW EXCLUSIVE MODE')
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -1084,6 +1096,8 @@ class IntegrationTests(unittest.TestCase):
                 finally:
                     self.db.execute('ROLLBACK')
             self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_data.model_during_upgrade')").fetchone()[0])
+            if isolation:
+                creator.execute('ROLLBACK')
             creator.execute("SELECT create_custom_model('during_upgrade', %s)",
                             ('table = "during_upgrade"\ncolumn = "body"\ntext_analyzer = "during_upgrade"',))
         self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.model_during_upgrade')").fetchone()[0])
