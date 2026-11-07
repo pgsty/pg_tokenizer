@@ -1,0 +1,32 @@
+{
+  "name": "pg_tokenizer",
+  "abstract": "Multilingual text analysis and vocabulary tokenization for PostgreSQL",
+  "description": "Composable text analyzers, custom vocabularies, pretrained models and native tsvector output for PostgreSQL, maintained by PGSTY.",
+  "version": "@DISTVERSION@",
+  "maintainer": ["Ruohang Feng <rh@vonng.com>"],
+  "license": "apache_2_0",
+  "release_status": "stable",
+  "provides": {
+    "pg_tokenizer": {
+      "file": "sql/install/pg_tokenizer--@DISTVERSION@.sql",
+      "docfile": "README.md",
+      "version": "@DISTVERSION@",
+      "abstract": "Multilingual text analysis and vocabulary tokenization"
+    }
+  },
+  "prereqs": {
+    "runtime": {"requires": {"PostgreSQL": ">= 14.0.0, < 19.0.0"}}
+  },
+  "resources": {
+    "homepage": "https://vchord.pgsty.com/docs/tokenizer/",
+    "bugtracker": {"web": "https://github.com/pgsty/pg_tokenizer/issues"},
+    "repository": {
+      "url": "https://github.com/pgsty/pg_tokenizer.git",
+      "web": "https://github.com/pgsty/pg_tokenizer",
+      "type": "git"
+    }
+  },
+  "meta-spec": {"version": "1.0.0", "url": "https://pgxn.org/spec/"},
+  "tags": ["tokenizer", "full-text-search", "bm25", "nlp"],
+  "no_index": {"directory": ["assets", "tests", "tools"]}
+}
