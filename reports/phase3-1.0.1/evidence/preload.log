@@ -1,0 +1,6 @@
+test_startup_recovery_and_catalog_identity (__main__.PreloadTests.test_startup_recovery_and_catalog_identity) ... ok
+
+----------------------------------------------------------------------
+Ran 1 test in 1.749s
+
+OK

@@ -1,0 +1,114 @@
+test_catalog_writers_are_parallel_unsafe (__main__.IntegrationTests.test_catalog_writers_are_parallel_unsafe) ... FAIL
+test_pg_dict_pins_schema (__main__.IntegrationTests.test_pg_dict_pins_schema) ... FAIL
+test_pg_dict_refreshes_oid_after_ddl (__main__.IntegrationTests.test_pg_dict_refreshes_oid_after_ddl) ... ok
+test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) ...
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_input_bytes', analyzer='bounded_plain') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_grams') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_regex') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_bytes', analyzer='bounded_plain') ... FAIL
+test_huggingface_padding_budget (__main__.IntegrationTests.test_huggingface_padding_budget) ... FAIL
+test_read_committed_refreshes_after_long_statement (__main__.IntegrationTests.test_read_committed_refreshes_after_long_statement) ... FAIL
+
+======================================================================
+FAIL: test_catalog_writers_are_parallel_unsafe (__main__.IntegrationTests.test_catalog_writers_are_parallel_unsafe)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 939, in test_catalog_writers_are_parallel_unsafe
+    self.assertEqual([(name, flag) for name, flag in writers if flag != 'u'], [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [('create_huggingface_model', 's'), ('crea[293 chars]'s')] != []
+
+First list contains 12 additional elements.
+First extra element 0:
+('create_huggingface_model', 's')
+
++ []
+- [('create_huggingface_model', 's'),
+-  ('create_lindera_model', 's'),
+-  ('create_stopwords', 's'),
+-  ('create_synonym', 's'),
+-  ('create_text_analyzer', 's'),
+-  ('create_tokenizer', 's'),
+-  ('drop_huggingface_model', 's'),
+-  ('drop_lindera_model', 's'),
+-  ('drop_stopwords', 's'),
+-  ('drop_synonym', 's'),
+-  ('drop_text_analyzer', 's'),
+-  ('drop_tokenizer', 's')]
+
+======================================================================
+FAIL: test_pg_dict_pins_schema (__main__.IntegrationTests.test_pg_dict_pins_schema)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 960, in test_pg_dict_pins_schema
+    self.assertEqual(reader.execute(query).fetchone()[0], ['run'])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['running'] != ['run']
+
+First differing element 0:
+'running'
+'run'
+
+- ['running']
+?      ----
+
++ ['run']
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_input_bytes', analyzer='bounded_plain')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 990, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_grams')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 990, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_regex')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 990, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_bytes', analyzer='bounded_plain')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 990, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_huggingface_padding_budget (__main__.IntegrationTests.test_huggingface_padding_budget)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 1005, in test_huggingface_padding_budget
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_read_committed_refreshes_after_long_statement (__main__.IntegrationTests.test_read_committed_refreshes_after_long_statement)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 864, in test_read_committed_refreshes_after_long_statement
+    self.assertNotEqual(result.fetchone()[0], expected)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: [33600, 31] == [33600, 31]
+
+----------------------------------------------------------------------
+Ran 6 tests in 2.520s
+
+FAILED (failures=8)

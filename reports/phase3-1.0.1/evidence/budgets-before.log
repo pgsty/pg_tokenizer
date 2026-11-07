@@ -1,0 +1,56 @@
+test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) ...
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_input_bytes', analyzer='bounded_plain') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_grams') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_regex') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_bytes', analyzer='bounded_plain') ... FAIL
+  test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_piece_bytes', analyzer='bounded_regex') ... FAIL
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_input_bytes', analyzer='bounded_plain')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 994, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_grams')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 994, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_tokens', analyzer='bounded_regex')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 994, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_output_bytes', analyzer='bounded_plain')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 994, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+======================================================================
+FAIL: test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) (setting='max_piece_bytes', analyzer='bounded_regex')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 994, in test_analysis_budgets
+    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ProgramLimitExceeded not raised
+
+----------------------------------------------------------------------
+Ran 1 test in 0.776s
+
+FAILED (failures=5)

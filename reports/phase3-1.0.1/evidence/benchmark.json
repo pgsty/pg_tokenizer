@@ -1,0 +1,108 @@
+{
+  "baseline": {
+    "extversion": "1.0.0",
+    "analyzer_50000_rows": {
+      "samples_ms": [
+        25.163,
+        26.536,
+        26.266,
+        25.9,
+        25.345,
+        27.169,
+        26.035
+      ],
+      "median_ms": 26.035
+    },
+    "bert_5000_rows": {
+      "samples_ms": [
+        32.342,
+        32.879,
+        35.285,
+        35.245,
+        34.577,
+        39.051,
+        37.594
+      ],
+      "median_ms": 35.245
+    },
+    "ngram_10000_rows": {
+      "samples_ms": [
+        26.537,
+        25.621,
+        25.175,
+        25.761,
+        25.427,
+        25.581,
+        26.458
+      ],
+      "median_ms": 25.621
+    },
+    "individual_3000_calls": {
+      "samples_ms": [
+        53.00887499470264,
+        56.923833006294444,
+        56.12091699731536
+      ],
+      "median_ms": 56.12091699731536
+    },
+    "read_wal_bytes": 0,
+    "definition_wal_bytes": 328,
+    "definition_contention": {
+      "blocked_on_first_writer": false,
+      "elapsed_ms": 1.4965840091463178
+    }
+  },
+  "current": {
+    "extversion": "1.0.1",
+    "analyzer_50000_rows": {
+      "samples_ms": [
+        30.537,
+        30.937,
+        30.404,
+        29.962,
+        32.423,
+        31.804,
+        31.391
+      ],
+      "median_ms": 30.937
+    },
+    "bert_5000_rows": {
+      "samples_ms": [
+        38.937,
+        33.233,
+        36.552,
+        32.549,
+        33.362,
+        33.686,
+        34.573
+      ],
+      "median_ms": 33.686
+    },
+    "ngram_10000_rows": {
+      "samples_ms": [
+        29.312,
+        27.143,
+        26.489,
+        27.182,
+        27.963,
+        27.006,
+        27.158
+      ],
+      "median_ms": 27.158
+    },
+    "individual_3000_calls": {
+      "samples_ms": [
+        99.89941699313931,
+        73.31087499915157,
+        76.39954199839849
+      ],
+      "median_ms": 76.39954199839849
+    },
+    "read_wal_bytes": 0,
+    "definition_wal_bytes": 400,
+    "definition_contention": {
+      "blocked_on_first_writer": true,
+      "elapsed_ms": 316.91770799807273
+    }
+  }
+}
