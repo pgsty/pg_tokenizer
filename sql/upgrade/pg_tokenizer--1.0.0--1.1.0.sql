@@ -1,4 +1,4 @@
--- pg_tokenizer 1.0.1: bounded analysis and snapshot-aware definition caches.
+-- pg_tokenizer 1.1.0: bounded analysis and snapshot-aware definition caches.
 -- SQL signatures, vocabulary IDs, and object OIDs are preserved.
 LOCK TABLE tokenizer_catalog.model IN SHARE ROW EXCLUSIVE MODE;
 

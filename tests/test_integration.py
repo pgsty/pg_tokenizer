@@ -63,7 +63,7 @@ class IntegrationTests(unittest.TestCase):
             "0.1.0"
             if "from_010" in self._testMethodName
             else ("1.0.0" if "from_100" in self._testMethodName else
-                  ("0.1.1" if "upgrade" in self._testMethodName else os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.0.1")))
+                  ("0.1.1" if "upgrade" in self._testMethodName else os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.1.0")))
         )
         self.db.execute(
             sql.SQL("CREATE EXTENSION pg_tokenizer VERSION {}").format(
@@ -538,7 +538,7 @@ class IntegrationTests(unittest.TestCase):
         original = self.db.execute(
             "SELECT id, token FROM model_race ORDER BY id"
         ).fetchall()
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(
             self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(),
             original,
@@ -580,12 +580,12 @@ class IntegrationTests(unittest.TestCase):
                     "SELECT has_schema_privilege(current_user, 'tokenizer_catalog', 'USAGE')"
                 ).fetchone()[0]
             )
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(
             self.db.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
             ).fetchone()[0],
-            "1.0.1",
+            "1.1.0",
         )
         self.assertEqual(
             self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(),
@@ -632,9 +632,9 @@ class IntegrationTests(unittest.TestCase):
         self.assert_embeddings(self.db)
         # All supported old versions have an upgrade path in standard pgrx packages.
         path = self.db.execute(
-            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.0.1'"
+            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.1.0'"
         ).fetchone()[0]
-        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.0.1")
+        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.1.0")
 
         # A fresh installation and an upgraded installation must expose the same
         # function signatures, defaults, volatility, language and implementation.
@@ -878,7 +878,7 @@ class IntegrationTests(unittest.TestCase):
         self.make_model(self.db)
         self.db.execute("INSERT INTO race(body) VALUES ('alpha beta')")
         original = self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall()
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(), original)
         self.db.execute("INSERT INTO race(body) VALUES ('gamma alpha')")
         self.assert_embeddings(self.db)
@@ -1026,7 +1026,7 @@ class IntegrationTests(unittest.TestCase):
         vocabulary = self.db.execute("SELECT * FROM vocabulary_view ORDER BY id").fetchall()
         with self.connect(user=self.owner) as reader:
             tokens = reader.execute("SELECT tokenize('alpha beta','owned')").fetchone()[0]
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
             self.assertEqual(reader.execute("SELECT tokenize('alpha beta','owned')").fetchone()[0], tokens)
             reader.execute("INSERT INTO owned(body) VALUES ('gamma alpha')")
             self.assert_embeddings(reader, 'owned')
@@ -1050,13 +1050,13 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("INSERT INTO race(body) VALUES ('alpha beta')")
         self.db.execute("CREATE SCHEMA tokenizer_data; CREATE TABLE tokenizer_data.marker(id int)")
         with self.assertRaises(psycopg.errors.DuplicateSchema):
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname='pg_tokenizer'").fetchone()[0], '1.0.0')
         self.assertEqual(self.db.execute("SELECT tokenize('alpha beta','race')").fetchone()[0], [1, 2])
         self.assertIsNotNone(self.db.execute("SELECT to_regclass('tokenizer_data.marker')").fetchone()[0])
         self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.definition_version')").fetchone()[0])
         self.db.execute("DROP SCHEMA tokenizer_data CASCADE")
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT tokenize('alpha beta','race')").fetchone()[0], [1, 2])
 
     def test_upgrade_from_100_serializes_custom_model_creation(self):
@@ -1077,7 +1077,7 @@ class IntegrationTests(unittest.TestCase):
                             break
                         time.sleep(0.02)
                     self.assertEqual(wait, 'relation')
-                    self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+                    self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
                     self.db.execute('COMMIT')
                     with self.assertRaises(psycopg.errors.SerializationFailure):
                         future.result(timeout=10)
@@ -1096,7 +1096,7 @@ class IntegrationTests(unittest.TestCase):
         with self.connect() as reader:
             reader.execute('BEGIN ISOLATION LEVEL REPEATABLE READ')
             self.assertEqual(reader.execute("SELECT apply_text_analyzer('hello', 'before_upgrade')").fetchone()[0], ['hello'])
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
             # The new relation is name-resolvable, but neither its catalog row
             # nor its singleton is visible to this pre-upgrade snapshot.
             self.assertEqual(reader.execute("SELECT count(*) FROM tokenizer_catalog.definition_version").fetchone()[0], 0)
@@ -1116,7 +1116,7 @@ class IntegrationTests(unittest.TestCase):
             self.make_model(creator)
             creator.execute("INSERT INTO race(body) VALUES ('alpha beta')")
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(self.db.execute, "ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+                future = pool.submit(self.db.execute, "ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
                 try:
                     deadline = time.monotonic() + 5
                     wait = None
@@ -1141,22 +1141,22 @@ class IntegrationTests(unittest.TestCase):
         before = self.db.execute("SELECT 'tokenizer_catalog.model_a_valid'::regclass::oid").fetchone()[0]
         self.db.execute('DROP TABLE tokenizer_catalog.model_z_broken')
         with self.assertRaises(psycopg.errors.UndefinedTable):
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname='pg_tokenizer'").fetchone()[0], '1.0.0')
         self.assertEqual(self.db.execute("SELECT 'tokenizer_catalog.model_a_valid'::regclass::oid").fetchone()[0], before)
         self.assertIsNone(self.db.execute("SELECT to_regnamespace('tokenizer_data')").fetchone()[0])
         self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.definition_version')").fetchone()[0])
         self.db.execute("SELECT drop_custom_model('z_broken')")
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT 'tokenizer_data.model_a_valid'::regclass::oid").fetchone()[0], before)
 
     def test_upgrade_from_100_pins_dictionary_names(self):
         self.db.execute("CREATE SCHEMA dictionary_upgrade")
         self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_upgrade.words (TEMPLATE = simple)")
-        # Simulate a pre-1.0.1 catalog without relying on the new create API.
+        # Simulate a pre-1.1.0 catalog without relying on the new create API.
         self.db.execute("INSERT INTO tokenizer_catalog.text_analyzer VALUES ('legacy_dict', %s)",
                         (json.dumps({'token_filters': [{'pg_dict': 'words'}]}),))
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT config::jsonb->'token_filters'->0->>'pg_dict' FROM tokenizer_catalog.text_analyzer WHERE name='legacy_dict'").fetchone()[0], 'dictionary_upgrade.words')
         self.assertEqual(self.db.execute("SELECT apply_text_analyzer('UPPER','legacy_dict')").fetchone()[0], ['upper'])
         self.assertEqual(self.db.execute("SELECT count(*) FROM tokenizer_catalog.definition_version").fetchone()[0], 1)
@@ -1169,11 +1169,11 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("INSERT INTO tokenizer_catalog.text_analyzer VALUES ('ambiguous_dict', %s)",
                         (json.dumps({'token_filters': [{'pg_dict': 'words'}]}),))
         with self.assertRaisesRegex(psycopg.errors.RaiseException, 'missing or ambiguous'):
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'").fetchone()[0], '1.0.0')
         self.db.execute("UPDATE tokenizer_catalog.text_analyzer SET config=%s WHERE name='ambiguous_dict'",
                         (json.dumps({'token_filters': [{'pg_dict': 'dictionary_a.words'}]}),))
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
 
     def test_upgrade_from_100_rejects_shadowed_builtin_dictionary(self):
         self.db.execute("CREATE SCHEMA dictionary_shadow")
@@ -1195,12 +1195,12 @@ class IntegrationTests(unittest.TestCase):
         for table, config in [('text_analyzer', analyzer), ('tokenizer', tokenizer)]:
             with self.subTest(table=table):
                 with self.assertRaisesRegex(psycopg.errors.RaiseException, f'in {table} shadowed_builtin is missing or ambiguous'):
-                    self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+                    self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
                 self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'").fetchone()[0], '1.0.0')
                 config['token_filters'] = [{'pg_dict': 'dictionary_shadow.simple'}]
                 self.db.execute(sql.SQL("UPDATE tokenizer_catalog.{} SET config=%s WHERE name='shadowed_builtin'").format(sql.Identifier(table)),
                                 (json.dumps(config),))
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(self.db.execute("SELECT apply_text_analyzer('UPPER', 'shadowed_builtin')").fetchone()[0], ['UPPER'])
         self.assertEqual(self.db.execute("SELECT tokenize('UPPER', 'shadowed_builtin')").fetchone()[0], [7])
 
@@ -1244,13 +1244,13 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("CREATE TABLE indexed_docs (body text)")
         self.db.execute("CREATE INDEX indexed_terms ON indexed_docs USING gin (apply_text_analyzer(body, 'indexed_words'))")
         with self.assertRaises(psycopg.errors.RaiseException):
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(
             self.db.execute("SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'").fetchone()[0],
             "0.1.1",
         )
         self.db.execute("DROP INDEX indexed_terms")
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
 
 
     def test_logical_dump_restores_definitions(self):
@@ -1365,7 +1365,7 @@ $$)""")
         self.db.execute("UPDATE tokenizer_catalog.stopwords SET config = 'custom' WHERE name = 'lucene_english'")
         notices = []
         self.db.add_notice_handler(lambda d: notices.append((d.severity_nonlocalized, d.message_primary)))
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
         self.assertEqual(
             [n for n in notices if n[0] == "WARNING"],
             [("WARNING", "stopwords lucene_english differ from the shipped lists")],

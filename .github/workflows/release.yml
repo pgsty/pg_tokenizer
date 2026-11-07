@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "existing release tag (v1.0.0 or 1.0.0)"
+        description: "existing release tag (v1.1.0 or 1.1.0)"
         required: true
         type: string
 
@@ -32,7 +32,7 @@ jobs:
             const version = process.env.INPUT_TAG.trim().replace(/^v/, '');
             const r = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
             if (!r.test(version)) {
-              core.setFailed('Invalid release version. Expected v1.0.0 or 1.0.0.');
+              core.setFailed('Invalid release version. Expected v1.1.0 or 1.1.0.');
               return;
             }
             const tag = `v${version}`;

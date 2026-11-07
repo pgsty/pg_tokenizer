@@ -3,7 +3,7 @@
 [![Website: vchord.pgsty.com](https://img.shields.io/badge/Website-vchord.pgsty.com-slategray?style=flat&logo=cilium&logoColor=white)](https://vchord.pgsty.com/)
 [![Docs: tokenizer](https://img.shields.io/badge/Docs-tokenizer-slategray?style=flat)](https://vchord.pgsty.com/docs/tokenizer/)
 [![Catalog: tokenizer](https://img.shields.io/badge/Catalog-tokenizer-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
-[![Version: v1.0.1](https://img.shields.io/badge/Version-v1.0.1-slategray?style=flat)](https://github.com/pgsty/pg_tokenizer/releases)
+[![Version: v1.1.0](https://img.shields.io/badge/Version-v1.1.0-slategray?style=flat)](https://github.com/pgsty/pg_tokenizer/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-slategray?style=flat&logo=opensourceinitiative&logoColor=green)](https://github.com/pgsty/pg_tokenizer/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/pgsty/pg_tokenizer?style=flat&logo=github&logoColor=black&color=slategray)](https://star-history.com/#pgsty/pg_tokenizer&Date)
 [![PostgreSQL: 14-19](https://img.shields.io/badge/PG-14--19-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
@@ -33,15 +33,15 @@
 
 ---
 
-## Version 1.0.1
+## Version 1.1.0
 
-Version 1.0.1 adds WAL-replicated definition invalidation for standbys and promotion, schema-bound PostgreSQL dictionaries, correct writer parallel markings, and configurable analysis budgets. It preserves SQL signatures and vocabulary IDs.
+Version 1.1.0 upgrades directly from 1.0.0. It adds WAL-replicated definition invalidation for standbys and promotion, schema-bound PostgreSQL dictionaries, correct writer parallel markings, and configurable analysis budgets. Runtime vocabulary tables and their sequences move to `tokenizer_data`, so database owners no longer need CREATE on `tokenizer_catalog`. SQL signatures, object OIDs and vocabulary IDs are preserved.
 
 It also fixes Lindera server-file permission checks, UTF-8 splitting of long custom tokens, repeated-lexeme `tsvector` conversion, trigger target coercion, and Jieba's swapped `full`/`precise` modes. Regenerate persisted output and rebuild dependent indexes if either Jieba mode was used in 1.0.0 or earlier. Analysis budgets reduce expansion risk but do not impose a hard memory or cancellation-time limit on third-party libraries.
 
 Version 1.0.0 was the first PGSTY release. It builds with pgrx 0.19.3 for PostgreSQL 14–18 and moves to Lindera 6.2, Jieba 0.11, and Hugging Face tokenizers 0.23. It adds native PostgreSQL `tsvector` output, filtered custom vocabularies with schema-qualified source tables, safe concurrent vocabulary writes, database-owner privileges, transaction-aware definition caches, preload models that survive cache invalidation and broken entries, and definition tables included in `pg_dump`. It fixes `ngram` for non-ASCII and short tokens, calls `pg_dict` dictionaries the way `ts_lexize` does, reserves the built-in stopword lists, and takes its Snowball stemmers from [`pgsty/rust-stemmers`](https://github.com/pgsty/rust-stemmers) 1.2.1 with unchanged output. Existing `tokenize()` calls still return `INT[]`.
 
-See [custom models](docs/06-model.md#custom-model), [native full-text search](docs/04-usage.md#native-postgresql-full-text-search), and [upgrade instructions](docs/01-installation.md#upgrading-to-101).
+See [custom models](docs/06-model.md#custom-model), [native full-text search](docs/04-usage.md#native-postgresql-full-text-search), [upgrade instructions](docs/01-installation.md#upgrading-to-110), and [release/PGXN preparation](docs/08-release.md). The source package includes a Makefile for PGXN clients; PGXN publication is a separate release step.
 
 ## Quick Start
 

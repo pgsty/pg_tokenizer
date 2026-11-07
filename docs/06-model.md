@@ -111,6 +111,8 @@ cargo pgrx install --sudo --release --features "lindera-ipadic lindera-ipadic-ne
 
 ## Custom model
 
+Since 1.1.0, vocabulary tables and identity sequences live in `tokenizer_data`. Model definitions and API functions remain in `tokenizer_catalog`. Upgrade preserves existing token IDs, table/index/sequence OIDs, owners and ACLs; update direct SQL references to the old vocabulary schema.
+
 You can build a custom model based on your own corpus easily. We provide following functions to help you build a custom model.
 
 - `create_custom_model`: Create a custom model only.

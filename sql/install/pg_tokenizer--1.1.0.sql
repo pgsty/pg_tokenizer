@@ -7,9 +7,18 @@ The ordering of items is not stable, it is driven by a dependency graph.
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/text_analyzer.rs:96
+-- src/model/mod.rs:87
 
-CREATE TABLE tokenizer_catalog.text_analyzer (
+CREATE TABLE tokenizer_catalog.model (
+    name TEXT NOT NULL UNIQUE PRIMARY KEY,
+    config TEXT NOT NULL
+);
+/* </end connected objects> */
+
+/* <begin connected objects> */
+-- src/token_filter/stopwords.rs:49
+
+CREATE TABLE tokenizer_catalog.stopwords (
     name TEXT NOT NULL UNIQUE PRIMARY KEY,
     config TEXT NOT NULL
 );
@@ -78,15 +87,6 @@ $body$ LANGUAGE plpgsql;
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/token_filter/stopwords.rs:49
-
-CREATE TABLE tokenizer_catalog.stopwords (
-    name TEXT NOT NULL UNIQUE PRIMARY KEY,
-    config TEXT NOT NULL
-);
-/* </end connected objects> */
-
-/* <begin connected objects> */
 -- src/token_filter/synonym.rs:62
 
 CREATE TABLE tokenizer_catalog.synonym (
@@ -96,18 +96,18 @@ CREATE TABLE tokenizer_catalog.synonym (
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/tokenizer.rs:89
+-- src/text_analyzer.rs:96
 
-CREATE TABLE tokenizer_catalog.tokenizer (
+CREATE TABLE tokenizer_catalog.text_analyzer (
     name TEXT NOT NULL UNIQUE PRIMARY KEY,
     config TEXT NOT NULL
 );
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/mod.rs:87
+-- src/tokenizer.rs:89
 
-CREATE TABLE tokenizer_catalog.model (
+CREATE TABLE tokenizer_catalog.tokenizer (
     name TEXT NOT NULL UNIQUE PRIMARY KEY,
     config TEXT NOT NULL
 );

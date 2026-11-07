@@ -166,6 +166,6 @@ Use the same analyzer/model and lexeme representation for documents and queries.
 
 ### Definition cache invalidation
 
-Since 1.0.1, catalog-backed definitions are validated against a one-row version counter committed and replicated with their changes. Each statement reads the counter and definitions under its SQL snapshot. Long-lived primary and standby sessions refresh when their snapshot can see the new version, including after promotion; a REPEATABLE READ transaction keeps its old view until it ends. Wait for WAL replay and begin a new snapshot when coordinating a primary-side definition change with standby queries.
+Since 1.1.0, catalog-backed definitions are validated against a one-row version counter committed and replicated with their changes. Each statement reads the counter and definitions under its SQL snapshot. Long-lived primary and standby sessions refresh when their snapshot can see the new version, including after promotion; a REPEATABLE READ transaction keeps its old view until it ends. Wait for WAL replay and begin a new snapshot when coordinating a primary-side definition change with standby queries.
 
 Dependent tokenizers refresh with their analyzers and models. Stored vectors and indexes still need explicit regeneration when output changes. Definition changes serialize on the version row until commit; vocabulary inserts do not. See [cache semantics and resource limits](07-limitation.md) for rollback, permissions, parallel queries and the four configurable budgets.

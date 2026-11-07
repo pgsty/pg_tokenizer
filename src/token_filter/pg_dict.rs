@@ -47,7 +47,7 @@ impl PgDictTokenFilter {
             )
         }
         .expect("parse_ident returned NULL");
-        // Before 1.0.1 names were stored unqualified. Keep a legacy name only
+        // Before 1.1.0 names were stored unqualified. Keep a legacy name only
         // when it identifies exactly one dictionary; a custom dictionary that
         // shadows a pg_catalog builtin is ambiguous because the old creator's
         // search_path cannot be recovered.
