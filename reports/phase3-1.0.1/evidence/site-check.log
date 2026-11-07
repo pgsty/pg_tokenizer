@@ -1,0 +1,25 @@
+GOWORK=off HUGO_MODULE_WORKSPACE=off go mod verify
+all modules verified
+GOWORK=off HUGO_MODULE_WORKSPACE=off hugo build --noBuildLock --minify --cleanDestinationDir --printPathWarnings --printI18nWarnings -d /tmp/pg-tokenizer-phase3-20261107/site-public
+Start building sites …
+hugo v0.169.0+extended+withdeploy darwin/arm64 BuildDate=2026-10-27T14:52:20Z VendorInfo=Homebrew
+
+WARN  Failed to read local Git log: fatal: not a git repository (or any of the parent directories): .git
+WARN  deprecated: css.Sass: libsass was deprecated in Hugo v0.153.0 and will be removed in a future release. Use dartsass instead. See https://gohugo.io/functions/css/sass/#dart-sass
+
+                  │ EN  │ ZH
+──────────────────┼─────┼─────
+ Pages            │ 465 │ 463
+ Paginator pages  │   3 │   3
+ Non-page files   │   7 │   0
+ Static files     │ 192 │ 192
+ Processed images │  19 │   0
+ Aliases          │ 225 │ 222
+ Cleaned          │   0 │   0
+
+Total in 4872 ms
+python3 bin/check_internal_links.py /tmp/pg-tokenizer-phase3-20261107/site-public
+Scanned 913 HTML files under /private/tmp/pg-tokenizer-phase3-20261107/site-public
+Missing internal targets: 0
+Missing HTML fragments:  0
+rm -rf /tmp/pg-tokenizer-phase3-20261107/site-public resources .hugo_build.lock

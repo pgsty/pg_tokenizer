@@ -8,7 +8,8 @@
 
 #![allow(clippy::upper_case_acronyms)]
 
-use std::{borrow::Cow, sync::Arc};
+use std::borrow::Cow;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
@@ -34,25 +35,25 @@ pub struct NFKD;
 
 impl CharacterFilter for NFC {
     fn apply(&self, text: &mut Cow<str>) {
-        *text = Cow::Owned(text.nfc().collect::<String>());
+        *text = Cow::Owned(crate::budget::characters(text.nfc()));
     }
 }
 
 impl CharacterFilter for NFD {
     fn apply(&self, text: &mut Cow<str>) {
-        *text = Cow::Owned(text.nfd().collect::<String>());
+        *text = Cow::Owned(crate::budget::characters(text.nfd()));
     }
 }
 
 impl CharacterFilter for NFKC {
     fn apply(&self, text: &mut Cow<str>) {
-        *text = Cow::Owned(text.nfkc().collect::<String>());
+        *text = Cow::Owned(crate::budget::characters(text.nfkc()));
     }
 }
 
 impl CharacterFilter for NFKD {
     fn apply(&self, text: &mut Cow<str>) {
-        *text = Cow::Owned(text.nfkd().collect::<String>());
+        *text = Cow::Owned(crate::budget::characters(text.nfkd()));
     }
 }
 

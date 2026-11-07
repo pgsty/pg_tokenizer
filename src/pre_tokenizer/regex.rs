@@ -15,13 +15,21 @@ pub struct RegexPreTokenizer {
 impl RegexPreTokenizer {
     pub fn new(pattern: &str) -> Self {
         Self {
-            pattern: regex::Regex::new(pattern).unwrap(),
+            pattern: regex::Regex::new(pattern).unwrap_or_else(|e| {
+                crate::utils::raise_error(
+                    pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+                    "invalid regular expression in regex pre_tokenizer",
+                    Some(e.to_string()),
+                    None,
+                )
+            }),
         }
     }
 }
 
 impl PreTokenizer for RegexPreTokenizer {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        self.pattern.find_iter(text).map(|m| m.as_str()).collect()
+        crate::budget::piece(text.len());
+        crate::budget::borrowed(self.pattern.find_iter(text).map(|m| m.as_str()))
     }
 }

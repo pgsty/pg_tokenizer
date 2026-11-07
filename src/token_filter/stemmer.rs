@@ -106,6 +106,7 @@ impl TokenFilter for StemmerTokenFilter {
 
     fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
         for token in tokens.iter_mut() {
+            crate::utils::check_for_interrupts();
             let stemmed = self.stemmer.stem(token);
             if let Cow::Owned(s) = stemmed {
                 *token = s;

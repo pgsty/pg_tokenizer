@@ -1,0 +1,245 @@
+# Configuration errors are PostgreSQL errors with SQLSTATE 22023 and the
+# parser's message as DETAIL, not Rust panics; missing custom models warn.
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE FUNCTION pg_temp.error_of(query text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+    state text;
+    message text;
+    detail text;
+BEGIN
+    EXECUTE query;
+    RETURN 'no error';
+EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS state = RETURNED_SQLSTATE, message = MESSAGE_TEXT, detail = PG_EXCEPTION_DETAIL;
+    RETURN state || ' ' || message || CASE WHEN detail <> '' THEN ' +detail' ELSE '' END;
+END $$;
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_text_analyzer('bad_toml', 'pre_tokenizer = ')$q$);
+----
+22023 invalid configuration for text analyzer "bad_toml" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_text_analyzer('bad_key', 'unknown_key = 1')$q$);
+----
+22023 invalid configuration for text analyzer "bad_key" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_text_analyzer('bad_regex', 'pre_tokenizer = { regex = "(" }')$q$);
+----
+22023 invalid regular expression in regex pre_tokenizer +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_text_analyzer('bad_ngram', $c$
+[[token_filters]]
+ngram = { min_gram = 3, max_gram = 2 }
+$c$)$q$);
+----
+22023 invalid ngram token filter configuration +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_tokenizer('bad_tokenizer', 'model = 1')$q$);
+----
+22023 invalid configuration for tokenizer "bad_tokenizer" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_tokenizer('bad_both', $c$
+text_analyzer = "x"
+model = "bert_base_uncased"
+pre_tokenizer = "unicode_segmentation"
+$c$)$q$);
+----
+22023 invalid configuration for tokenizer "bad_both" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_custom_model('bad_custom', 'table = ')$q$);
+----
+22023 invalid configuration for custom model "bad_custom" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_lindera_model('bad_lindera', '[segmenter')$q$);
+----
+22023 invalid configuration for Lindera model "bad_lindera" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('bad_hf', 'not json')$q$);
+----
+22023 invalid configuration for Hugging Face model "bad_hf" +detail
+
+# Broken catalog rows fail when they are loaded.
+statement ok
+INSERT INTO tokenizer_catalog.text_analyzer VALUES ('broken_analyzer', 'not json');
+
+statement ok
+INSERT INTO tokenizer_catalog.tokenizer VALUES ('broken_tokenizer', '{"model": 1}');
+
+statement ok
+INSERT INTO tokenizer_catalog.model VALUES ('broken_model', '{"unknown": {}}');
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.apply_text_analyzer('x', 'broken_analyzer')$q$);
+----
+22023 invalid configuration for text analyzer "broken_analyzer" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize('x', 'broken_tokenizer')$q$);
+----
+22023 invalid configuration for tokenizer "broken_tokenizer" +detail
+
+# A catalog row that combines text_analyzer with inline analyzer options is
+# rejected on load as on creation, instead of ignoring the inline options.
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('lazy_words', 'pre_tokenizer = "unicode_segmentation"');
+
+statement ok
+INSERT INTO tokenizer_catalog.tokenizer VALUES ('lazy_both',
+'{"text_analyzer": "lazy_words", "token_filters": [{"stopwords": "nltk_english"}], "model": "bert_base_uncased"}');
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize('the hello', 'lazy_both')$q$);
+----
+22023 invalid configuration for tokenizer "lazy_both" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize_to_tsvector('the hello', 'lazy_both')$q$);
+----
+22023 invalid configuration for tokenizer "lazy_both" +detail
+
+statement ok
+INSERT INTO tokenizer_catalog.tokenizer VALUES ('lazy_valid',
+'{"text_analyzer": "lazy_words", "model": "bert_base_uncased"}');
+
+query T
+SELECT tokenizer_catalog.tokenize('the hello', 'lazy_valid');
+----
+{1996,7592}
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_tokenizer('uses_broken', 'model = "broken_model"')$q$);
+----
+22023 invalid configuration for model "broken_model" +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.drop_custom_model('broken_model')$q$);
+----
+22023 invalid configuration for model "broken_model" +detail
+
+# A missing custom model warns, like the other drop functions, and leaves
+# tokenizers alone.
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('kept_tokenizer', 'model = "bert_base_uncased"');
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.drop_custom_model('missing_model')$q$);
+----
+no error
+
+query T
+SELECT tokenizer_catalog.tokenize('hello', 'kept_tokenizer');
+----
+{7592}
+
+# Hugging Face imports reject token IDs that do not fit in INT.
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_max',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "max": 2147483647}, "unk_token": "[UNK]"}}')$q$);
+----
+no error
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('hf_max', 'model = "hf_max"');
+
+query T
+SELECT tokenizer_catalog.tokenize('max', 'hf_max');
+----
+{2147483647}
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_vocab',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "big": 2147483648}, "unk_token": "[UNK]"}}')$q$);
+----
+22023 token ID 2147483648 of Hugging Face model "hf_vocab" is out of range for type integer +detail
+
+# Added tokens cannot carry an ID of their own: the library reassigns the
+# "id" of a token missing from the vocabulary, so this import succeeds and the
+# token gets the next ID after the vocabulary.
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_added',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "added_tokens": [{"id": 2147483648, "content": "new", "single_word": false, "lstrip": false, "rstrip": false, "normalized": false, "special": true}]}')$q$);
+----
+no error
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('hf_added', 'model = "hf_added"');
+
+query T
+SELECT tokenizer_catalog.tokenize('new', 'hf_added');
+----
+{1}
+
+# Each special-token path below has a small vocabulary and no added tokens.
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_bert',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "post_processor": {"type": "BertProcessing", "sep": ["[SEP]", 2147483648], "cls": ["[CLS]", 1]}}')$q$);
+----
+22023 token ID 2147483648 of Hugging Face model "hf_bert" is out of range for type integer +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_roberta',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "post_processor": {"type": "RobertaProcessing", "sep": ["</s>", 2], "cls": ["<s>", 4294967295],
+                     "trim_offsets": true, "add_prefix_space": true}}')$q$);
+----
+22023 token ID 4294967295 of Hugging Face model "hf_roberta" is out of range for type integer +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_template',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "post_processor": {"type": "TemplateProcessing",
+    "single": [{"SpecialToken": {"id": "[CLS]", "type_id": 0}}, {"Sequence": {"id": "A", "type_id": 0}}],
+    "pair": [{"Sequence": {"id": "A", "type_id": 0}}, {"Sequence": {"id": "B", "type_id": 1}}],
+    "special_tokens": {"[CLS]": {"id": "[CLS]", "ids": [2147483648], "tokens": ["[CLS]"]}}}}')$q$);
+----
+22023 token ID 2147483648 of Hugging Face model "hf_template" is out of range for type integer +detail
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_sequence',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0}, "unk_token": "[UNK]"},
+  "post_processor": {"type": "Sequence", "processors": [
+    {"type": "ByteLevel", "add_prefix_space": true, "trim_offsets": true, "use_regex": true},
+    {"type": "BertProcessing", "sep": ["[SEP]", 2], "cls": ["[CLS]", 2147483649]}]}}')$q$);
+----
+22023 token ID 2147483649 of Hugging Face model "hf_sequence" is out of range for type integer +detail
+
+# Rows stored before the import check still load; out-of-range IDs fail
+# clearly at tokenization.
+statement ok
+INSERT INTO tokenizer_catalog.model VALUES ('hf_legacy',
+'{"hugging_face": "{\"model\": {\"type\": \"WordLevel\", \"vocab\": {\"[UNK]\": 0, \"small\": 5, \"big\": 2147483648}, \"unk_token\": \"[UNK]\"}}"}');
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('hf_legacy', 'model = "hf_legacy"');
+
+query T
+SELECT tokenizer_catalog.tokenize('small', 'hf_legacy');
+----
+{5}
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize('big', 'hf_legacy')$q$);
+----
+22003 token ID 2147483648 of tokenizer "hf_legacy" is out of range for type integer
+
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.tokenize_to_tsvector('big', 'hf_legacy')$q$);
+----
+22003 token ID 2147483648 of tokenizer "hf_legacy" is out of range for type integer
+
+statement ok
+ROLLBACK;

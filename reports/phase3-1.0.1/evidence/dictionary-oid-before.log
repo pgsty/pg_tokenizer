@@ -1,0 +1,17 @@
+test_pg_dict_refreshes_oid_after_ddl (__main__.IntegrationTests.test_pg_dict_refreshes_oid_after_ddl) ... ERROR
+
+======================================================================
+ERROR: test_pg_dict_refreshes_oid_after_ddl (__main__.IntegrationTests.test_pg_dict_refreshes_oid_after_ddl)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 975, in test_pg_dict_refreshes_oid_after_ddl
+    self.assertEqual(reader.execute(query).fetchone()[0], ['running'])
+                     ~~~~~~~~~~~~~~^^^^^^^
+  File "/private/tmp/pg-tokenizer-phase3-20261107/venv/lib/python3.14/site-packages/psycopg/connection.py", line 304, in execute
+    raise ex.with_traceback(None)
+psycopg.errors.InternalError_: cache lookup failed for text search dictionary 17062
+
+----------------------------------------------------------------------
+Ran 1 test in 0.779s
+
+FAILED (errors=1)

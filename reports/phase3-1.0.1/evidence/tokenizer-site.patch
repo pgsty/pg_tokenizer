@@ -1,0 +1,78 @@
+diff --git a/content/docs/tokenizer/installation.md b/content/docs/tokenizer/installation.md
+index a7ed8f6..4c4c6fa 100644
+--- a/content/docs/tokenizer/installation.md
++++ b/content/docs/tokenizer/installation.md
+@@ -112,0 +113,6 @@ External Lindera dictionaries and the cluster's `pg_tokenizer/preload_models` di
++
++## Upgrading to 1.0.1 {#upgrade-101}
++
++Install matching 1.0.1 library and SQL files on the primary and replicas, restart each server to reload the preloaded library, then run `ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1';` in each primary database. Paths from 0.1.0, 0.1.1 and 1.0.0 preserve signatures, vocabulary IDs and stored data. The new standby cache signal becomes active only after this SQL change commits and replays.
++
++Qualify missing/ambiguous legacy pg_dict references before upgrading; explicitly qualify custom dictionaries that deliberately shadow builtin names. Review the [new resource budgets](/docs/tokenizer/reference/#definition-caches) for bulk ingestion. The runtime schema layout remains unchanged: database owners still need CREATE on tokenizer_catalog for vocabulary tables. The new counter grants PUBLIC only SELECT; its internal trigger is SECURITY DEFINER with a fixed search_path and no public EXECUTE grant.
+diff --git a/content/docs/tokenizer/installation.zh.md b/content/docs/tokenizer/installation.zh.md
+index 77b6d46..11b0c47 100644
+--- a/content/docs/tokenizer/installation.zh.md
++++ b/content/docs/tokenizer/installation.zh.md
+@@ -112,0 +113,6 @@ ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0';
++
++## 升级到 1.0.1 {#upgrade-101}
++
++在主库和备库安装匹配的 1.0.1 共享库与 SQL 文件，分别重启以重新加载预加载库，然后在每个主库数据库执行 `ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1';`。支持从 0.1.0、0.1.1 和 1.0.0 升级，保留函数签名、词表 ID 与现有数据；备库失效信号在 SQL 升级提交并回放后才启用。
++
++升级前应明确限定缺失或有歧义的旧 pg_dict 名称，也应限定刻意覆盖内置词典的自定义词典。批量导入前检查[新增资源预算](/zh/docs/tokenizer/reference/#analysis-budgets)。运行时 schema 布局保持不变：数据库 owner 为创建词表仍需 tokenizer_catalog 的 CREATE 权限。新版本表只向 PUBLIC 开放 SELECT，内部触发器以 SECURITY DEFINER 和固定 search_path 运行，不向 PUBLIC 开放 EXECUTE。
+diff --git a/content/docs/tokenizer/reference.md b/content/docs/tokenizer/reference.md
+index 6285cc1..72c1d44 100644
+--- a/content/docs/tokenizer/reference.md
++++ b/content/docs/tokenizer/reference.md
+@@ -88,0 +89,15 @@ These functions are `STABLE` because they read tokenizer definitions from the ca
++
++## Definition caches and resource budgets {#definition-caches}
++
++In 1.0.1, a transactional counter in `tokenizer_catalog.definition_version` is replicated with definition changes. Primary and hot-standby connections validate cached analyzers, tokenizers, models, stopwords and synonyms against their current SQL snapshot. Long-lived connections refresh after the commit is visible; promotion keeps this behavior. An old REPEATABLE READ snapshot or a lagging/paused replica still sees the old definition. Wait for the primary commit LSN to replay and begin a new snapshot when coordinating changes. Persisted vectors and indexes require explicit regeneration if output changes.
++
++The version check reads one row per statement, rather than scanning definitions per token. Definition-changing transactions serialize on that row and add one heap/WAL update per modifying statement; vocabulary inserts do not. Catalog-writing functions are `PARALLEL UNSAFE`, while read-only analysis remains `PARALLEL SAFE`. Definition-changing API calls still reject `PREPARE TRANSACTION`.
++
++| Session setting | Default | Budget |
++| --- | ---: | --- |
++| `pg_tokenizer.max_input_bytes` | 16,777,216 | Bytes in one analyzer input |
++| `pg_tokenizer.max_output_tokens` | 1,000,000 | Tokens or IDs in each stage |
++| `pg_tokenizer.max_output_bytes` | 67,108,864 | Token bytes plus String descriptors, ID bytes, character output or ngram offsets |
++| `pg_tokenizer.max_piece_bytes` | 1,048,576 | Input to one regex or opaque library/dictionary call |
++
++Exceeding a budget raises SQLSTATE `54000` without truncating output. These checks bound extension-owned stages, including ngram expansion and HF fixed padding, but do not impose a hard RSS limit: simultaneous buffers, cached models and library workspace add memory. Arbitrary HF normalizers/post-processors can allocate internally before output is checked. A single regex search, Jieba/Lindera/HF call or dictionary call can still delay cancellation. Use trusted model configurations and bounded documents; raising the limits increases memory exposure.
+diff --git a/content/docs/tokenizer/reference.zh.md b/content/docs/tokenizer/reference.zh.md
+index 5568dc9..d3a7eae 100644
+--- a/content/docs/tokenizer/reference.zh.md
++++ b/content/docs/tokenizer/reference.zh.md
+@@ -94 +94,14 @@ upstream_link: "https://github.com/supervc-stack/pg_tokenizer.rs/blob/main/docs/
+-创建、删除或重建分析器、分词器、模型、停用词和同义词后，缓存会在当前事务结束时跨后端失效；回滚也会清理当前后端的缓存。依赖被重建的分析器或模型的分词器会在下一次调用时重新加载。这个机制不会自动重写已经持久化的 `INT[]`、`bm25vector` 或 `tsvector` 列，定义变化后应按需回填并重建相关索引。
++从 1.0.1 起，`tokenizer_catalog.definition_version` 中的一行事务性版本号与定义变更一同复制。主库和热备连接都在当前 SQL 快照下核对分析器、分词器、模型、停用词及同义词缓存；长连接在新提交对其快照可见时刷新，promotion 后也保持这一行为。旧的 REPEATABLE READ 快照、延迟或暂停回放的备库仍会读取旧定义。协调主备定义变更时，需要等待主库提交 LSN 回放完成并开始新快照。输出改变后，持久化向量和索引仍需显式重算或重建。
++
++版本检查每条语句读取一行，不会逐词扫描定义表。修改定义的事务在版本行上串行化，每条修改语句增加一次 heap/WAL 更新；普通词表插入不更新版本行。写目录的函数均标记为 `PARALLEL UNSAFE`，只读分析保留 `PARALLEL SAFE`。修改定义的 API 仍不允许 `PREPARE TRANSACTION`。
++
++## 分析资源预算 {#analysis-budgets}
++
++| 会话参数 | 默认值 | 预算范围 |
++| --- | ---: | --- |
++| `pg_tokenizer.max_input_bytes` | 16,777,216 | 单次分析器输入的 UTF-8 字节数 |
++| `pg_tokenizer.max_output_tokens` | 1,000,000 | 每个阶段的词元或 ID 数量 |
++| `pg_tokenizer.max_output_bytes` | 67,108,864 | 词元字节与 String 描述符、ID 字节、字符输出或 ngram 偏移表 |
++| `pg_tokenizer.max_piece_bytes` | 1,048,576 | 单次 regex、第三方库或 PostgreSQL 词典调用的输入字节数 |
++
++超限返回 SQLSTATE `54000`，不会静默截断结果。检查约束扩展自己构建的中间结果、ngram 扩张及 HF 固定 padding，但不构成 backend RSS 硬上限：同时存在的缓冲区、缓存模型和库内部工作区仍占内存。任意 HF normalizer/postprocessor 可能在输出检查前分配内部内存。单次 regex 搜索或 Jieba/Lindera/HF/词典调用仍可能延迟取消；应使用可信模型配置并限制文档大小，调高预算会增加内存暴露。
+diff --git a/content/docs/tokenizer/text-analyzer.md b/content/docs/tokenizer/text-analyzer.md
+index 574b7e0..11eecb8 100644
+--- a/content/docs/tokenizer/text-analyzer.md
++++ b/content/docs/tokenizer/text-analyzer.md
+@@ -212,0 +213,3 @@ pg_dict = "english_stem"
++Since 1.0.1, creation resolves the name and stores its schema-qualified form. Later calls use that name independently of the session search_path and resolve its OID once per batch, so DROP/CREATE and ALTER no longer require reconnecting. Renaming/moving the dictionary requires updating the analyzer. Upgrade pins old builtin names to pg_catalog and unique custom names to their schema; ambiguous or missing names must be qualified before upgrade. Changes to external dictionary files still follow PostgreSQL's normal reload rules.
++
++
+diff --git a/content/docs/tokenizer/text-analyzer.zh.md b/content/docs/tokenizer/text-analyzer.zh.md
+index da9138d..96bb538 100644
+--- a/content/docs/tokenizer/text-analyzer.zh.md
++++ b/content/docs/tokenizer/text-analyzer.zh.md
+@@ -212,0 +213,3 @@ pg_dict = "english_stem"
++从 1.0.1 起，创建时会解析词典并保存带 schema 的名称；后续调用不再依赖会话 search_path，每批词元重新解析 OID，因此 DROP/CREATE 或 ALTER 后无需重连。词典改名或移到其他 schema 后需要修改分析器。升级会将旧内置词典名固定到 pg_catalog，将唯一的自定义词典名固定到对应 schema；歧义或缺失的名字需要在升级前明确限定。外部词典文件变化仍遵循 PostgreSQL 原有的重新加载规则。
++
++

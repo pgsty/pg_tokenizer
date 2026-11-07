@@ -1,0 +1,251 @@
+# need lindera-ipadic flag
+# Only superusers and roles with privileges of pg_read_server_files may make
+# Lindera open server files; embedded dictionaries need no privilege.
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE ROLE tok_lindera_user;
+
+statement ok
+CREATE ROLE tok_lindera_noinherit NOINHERIT;
+
+statement ok
+CREATE ROLE tok_lindera_readers;
+
+statement ok
+GRANT USAGE ON SCHEMA tokenizer_catalog TO tok_lindera_user, tok_lindera_noinherit;
+
+statement ok
+GRANT SELECT, INSERT ON tokenizer_catalog.model, tokenizer_catalog.tokenizer
+TO tok_lindera_user, tok_lindera_noinherit;
+
+# A user dictionary in the data directory. Relative paths resolve there too.
+statement ok
+DO $$ BEGIN
+EXECUTE pg_catalog.format('COPY (SELECT %L) TO %L',
+    '東京スカイツリー,カスタム名詞,トウキョウスカイツリー',
+    pg_catalog.current_setting('data_directory') || '/pg_tokenizer/lindera_privileges.csv');
+END $$;
+
+statement ok
+SELECT tokenizer_catalog.create_lindera_model('priv_userdict', $$
+[segmenter]
+dictionary = "embedded://ipadic"
+user_dictionary = "pg_tokenizer/lindera_privileges.csv"
+$$);
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('priv_userdict', 'model = "priv_userdict"');
+
+query T
+SELECT tokenizer_catalog.tokenize('東京スカイツリー', 'priv_userdict');
+----
+{1073741824}
+
+statement ok
+SET ROLE tok_lindera_user;
+
+# Authorization applies to loading: an object this backend already loaded
+# (here by the superuser) remains usable.
+query T
+SELECT tokenizer_catalog.tokenize('東京スカイツリー', 'priv_userdict');
+----
+{1073741824}
+
+statement ok
+SAVEPOINT refused;
+
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_lindera_model('priv_dictionary_path', $$
+[segmenter]
+dictionary = "/etc"
+$$);
+
+statement ok
+ROLLBACK TO SAVEPOINT refused;
+
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_lindera_model('priv_dictionary_uri', $$
+[segmenter]
+dictionary = "file:///etc"
+$$);
+
+statement ok
+ROLLBACK TO SAVEPOINT refused;
+
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_lindera_model('priv_user_path', $$
+[segmenter]
+dictionary = "embedded://ipadic"
+user_dictionary = "pg_tokenizer/lindera_privileges.csv"
+$$);
+
+statement ok
+ROLLBACK TO SAVEPOINT refused;
+
+# Legacy dictionary tables are normalized before the check.
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_lindera_model('priv_legacy_path', $$
+[segmenter.dictionary]
+path = "/etc"
+memmap = true
+$$);
+
+statement ok
+ROLLBACK TO SAVEPOINT refused;
+
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_lindera_model('priv_legacy_user', $$
+[segmenter.dictionary]
+kind = "ipadic"
+[segmenter.user_dictionary]
+kind = "ipadic"
+path = "pg_tokenizer/lindera_privileges.csv"
+$$);
+
+statement ok
+ROLLBACK TO SAVEPOINT refused;
+
+# Loading the superuser's model from the catalog is a load in this backend.
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_tokenizer('priv_userdict2', 'model = "priv_userdict"');
+
+statement ok
+ROLLBACK TO SAVEPOINT refused;
+
+# Writing the catalog directly does not bypass the check.
+statement ok
+INSERT INTO tokenizer_catalog.model (name, config) VALUES ('priv_dml',
+'{"lindera":{"segmenter":{"dictionary":"embedded://ipadic","user_dictionary":"pg_tokenizer/lindera_privileges.csv"}}}');
+
+statement ok
+SAVEPOINT refused_dml;
+
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_tokenizer('priv_dml', 'model = "priv_dml"');
+
+statement ok
+ROLLBACK TO SAVEPOINT refused_dml;
+
+# Embedded dictionaries, including legacy kind tables, need no privilege.
+statement ok
+SELECT tokenizer_catalog.create_lindera_model('priv_embedded', $$
+[segmenter]
+dictionary = "embedded://ipadic"
+$$);
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('priv_embedded', 'model = "priv_embedded"');
+
+query T
+SELECT tokenizer_catalog.tokenize('関西国際空港限定トートバッグ', 'priv_embedded');
+----
+{372982,374178}
+
+statement ok
+SELECT tokenizer_catalog.create_lindera_model('priv_legacy_kind', $$
+[segmenter.dictionary]
+kind = "ipadic"
+$$);
+
+# A failed load reports Lindera details only to roles that may read server
+# files: Lindera errors can quote file names and contents.
+statement ok
+DO $$
+DECLARE
+    state text;
+    message text;
+    detail text;
+BEGIN
+    PERFORM tokenizer_catalog.create_lindera_model('priv_bad_kind', $config$
+[segmenter]
+dictionary = "embedded://nonexistent"
+$config$);
+    RAISE EXCEPTION 'load succeeded';
+EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS state = RETURNED_SQLSTATE, message = MESSAGE_TEXT, detail = PG_EXCEPTION_DETAIL;
+    IF state <> '22023' OR message <> 'failed to load Lindera dictionary' OR detail <> '' THEN
+        RAISE EXCEPTION 'unexpected error: % % %', state, message, detail;
+    END IF;
+END $$;
+
+statement ok
+RESET ROLE;
+
+statement ok
+DO $$
+DECLARE
+    state text;
+    message text;
+    detail text;
+BEGIN
+    PERFORM tokenizer_catalog.create_lindera_model('priv_bad_path', $config$
+[segmenter]
+dictionary = "/nonexistent/pg_tokenizer/dictionary"
+$config$);
+    RAISE EXCEPTION 'load succeeded';
+EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS state = RETURNED_SQLSTATE, message = MESSAGE_TEXT, detail = PG_EXCEPTION_DETAIL;
+    IF state <> '22023' OR message <> 'failed to load Lindera dictionary'
+        OR detail NOT LIKE '%/nonexistent/pg_tokenizer/dictionary%' THEN
+        RAISE EXCEPTION 'unexpected error: % % %', state, message, detail;
+    END IF;
+END $$;
+
+# Inherited membership in pg_read_server_files allows file dictionaries.
+statement ok
+GRANT pg_read_server_files TO tok_lindera_readers;
+
+statement ok
+GRANT tok_lindera_readers TO tok_lindera_user, tok_lindera_noinherit;
+
+statement ok
+SET ROLE tok_lindera_user;
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('priv_userdict2', 'model = "priv_userdict"');
+
+query T
+SELECT tokenizer_catalog.tokenize('東京スカイツリー', 'priv_userdict2');
+----
+{1073741824}
+
+statement ok
+SELECT tokenizer_catalog.create_tokenizer('priv_dml', 'model = "priv_dml"');
+
+query T
+SELECT tokenizer_catalog.tokenize('東京スカイツリー', 'priv_dml');
+----
+{1073741824}
+
+statement ok
+SELECT tokenizer_catalog.create_lindera_model('priv_user_path', $$
+[segmenter]
+dictionary = "embedded://ipadic"
+user_dictionary = "pg_tokenizer/lindera_privileges.csv"
+$$);
+
+# Membership without inheritance does not grant the privilege.
+statement ok
+SET ROLE tok_lindera_noinherit;
+
+statement ok
+SAVEPOINT noinherit;
+
+statement error permission denied to load a Lindera dictionary from a file
+SELECT tokenizer_catalog.create_lindera_model('priv_noinherit', $$
+[segmenter]
+dictionary = "embedded://ipadic"
+user_dictionary = "pg_tokenizer/lindera_privileges.csv"
+$$);
+
+statement ok
+ROLLBACK TO SAVEPOINT noinherit;
+
+statement ok
+RESET ROLE;
+
+statement ok
+ROLLBACK;

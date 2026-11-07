@@ -6,11 +6,9 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::{
-    cell::RefCell,
-    collections::HashSet,
-    sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering},
-};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 use pgrx::{
     register_subxact_callback, register_xact_callback, PgAtomic, PgSubXactCallbackEvent,
@@ -28,8 +26,21 @@ static TRANSACTION_DIRTY: AtomicBool = AtomicBool::new(false);
 static TRANSACTION_SAW_EPOCH: AtomicBool = AtomicBool::new(false);
 static LAST_STATEMENT: AtomicI64 = AtomicI64::new(0);
 static LAST_COMMAND: AtomicU32 = AtomicU32::new(0);
+static VALIDATION_CALLBACKS: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SnapshotKey {
+    statement: i64,
+    command: u32,
+    snapshot: usize,
+    snapshot_command: u32,
+    recovery: bool,
+}
+
 thread_local! {
     static DIRTY_SUBTRANSACTIONS: RefCell<HashSet<pgrx::pg_sys::SubTransactionId>> = RefCell::default();
+    static VALIDATED_SNAPSHOT: RefCell<Option<SnapshotKey>> = const { RefCell::new(None) };
+    static CATALOG_VERSION: RefCell<Option<(pgrx::pg_sys::Oid, i64)>> = const { RefCell::new(None) };
 }
 
 #[allow(unexpected_cfgs)]
@@ -38,10 +49,86 @@ pub fn init() {
 }
 
 fn clear_local_caches() {
+    VALIDATED_SNAPSHOT.with(|key| *key.borrow_mut() = None);
     crate::model::clear_cache();
     crate::text_analyzer::clear_cache();
     crate::token_filter::clear_caches();
     crate::tokenizer::clear_cache();
+}
+
+fn end_validation() {
+    VALIDATED_SNAPSHOT.with(|key| *key.borrow_mut() = None);
+    VALIDATION_CALLBACKS.store(false, Ordering::SeqCst);
+}
+
+// The version and definitions are read through the same active SQL snapshot.
+// A single-row probe per statement works on the primary, during WAL replay and
+// after promotion. Comparing in both directions also protects old snapshots.
+fn check_catalog_version() -> bool {
+    use pgrx::pg_sys;
+    let snapshot = unsafe { pg_sys::GetActiveSnapshot() };
+    let worker = unsafe { pg_sys::ParallelWorkerNumber } >= 0;
+    let key = SnapshotKey {
+        statement: unsafe { pg_sys::GetCurrentStatementStartTimestamp() },
+        // Mark read-only commands used, so multiple statements in one protocol
+        // message cannot reuse a key. Parallel workers execute one query and
+        // must not set the leader's command-ID-used flag.
+        command: unsafe { pg_sys::GetCurrentCommandId(!worker) },
+        snapshot: snapshot as usize,
+        snapshot_command: unsafe { (*snapshot).curcid },
+        recovery: unsafe { pg_sys::RecoveryInProgress() },
+    };
+    if VALIDATED_SNAPSHOT.with(|cached| *cached.borrow() == Some(key)) {
+        return true;
+    }
+    let namespace = unsafe { pg_sys::get_namespace_oid(c"tokenizer_catalog".as_ptr(), true) };
+    let relation = unsafe { pg_sys::get_relname_relid(c"definition_version".as_ptr(), namespace) };
+    if relation == pg_sys::InvalidOid {
+        // Old extension SQL is usable while an administrator upgrades it.
+        return false;
+    }
+    let extension = unsafe { pg_sys::get_extension_oid(c"pg_tokenizer".as_ptr(), false) };
+    if unsafe { pg_sys::getExtensionOfObject(pg_sys::RelationRelationId, relation) } != extension {
+        // A database owner could have occupied this name before the upgrade.
+        // Never adopt an unrelated table as the extension's consistency signal.
+        return false;
+    }
+    let version = crate::utils::catalog_one::<i64>(
+        "SELECT version FROM tokenizer_catalog.definition_version WHERE singleton",
+        &[],
+    )
+    .unwrap_or_else(|| pgrx::error!("pg_tokenizer definition version is missing"));
+    let identity = (relation, version);
+    let changed = CATALOG_VERSION.with(|cached| cached.replace(Some(identity)) != Some(identity));
+    if changed {
+        clear_local_caches();
+    }
+    VALIDATED_SNAPSHOT.with(|cached| *cached.borrow_mut() = Some(key));
+    if !VALIDATION_CALLBACKS.swap(true, Ordering::SeqCst) {
+        for event in [
+            PgXactCallbackEvent::Commit,
+            PgXactCallbackEvent::Prepare,
+            PgXactCallbackEvent::ParallelCommit,
+        ] {
+            register_xact_callback(event, end_validation);
+        }
+        for event in [
+            PgXactCallbackEvent::Abort,
+            PgXactCallbackEvent::ParallelAbort,
+        ] {
+            register_xact_callback(event, || {
+                // Direct catalog DML can load uncommitted definitions without
+                // mark_catalog_changed(). Its rolled-back counter value may
+                // later be reused by another transaction with different data.
+                clear_local_caches();
+                end_validation();
+            });
+        }
+        register_subxact_callback(PgSubXactCallbackEvent::AbortSub, |_, _| {
+            clear_local_caches();
+        });
+    }
+    true
 }
 
 fn commit_transaction() {
@@ -71,6 +158,9 @@ fn end_transaction_after_new_epoch() {
 }
 
 pub fn check() {
+    if check_catalog_version() {
+        return;
+    }
     let shared_epoch = CACHE_EPOCH.get().load(Ordering::SeqCst);
     if LOCAL_CACHE_EPOCH.load(Ordering::SeqCst) != shared_epoch {
         clear_local_caches();

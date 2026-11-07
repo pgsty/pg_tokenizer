@@ -11,10 +11,13 @@ use std::sync::Arc;
 use anyhow::Context;
 use lindera::dictionary::{DictionaryKind, WordId};
 use lindera_analysis::tokenizer::{Tokenizer, TokenizerConfig};
+use pgrx::pg_sys::errcodes::PgSqlErrorCode;
+use pgrx::pg_sys::{self};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
+use crate::utils::{invalid_config, raise_error};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LinderaConfig {
@@ -63,19 +66,89 @@ impl LinderaConfig {
     }
 }
 
+// The values Lindera opens when it builds a tokenizer from a normalized
+// configuration: the system dictionary and the optional user dictionary.
+// Lindera ignores a non-string value for either key, and so does this check.
+fn dictionary_sources(config: &TokenizerConfig) -> impl Iterator<Item = &str> {
+    let segmenter = config.get("segmenter");
+    ["dictionary", "user_dictionary"]
+        .into_iter()
+        .filter_map(move |key| segmenter?.get(key)?.as_str())
+}
+
+// Only an `embedded://` URI is served from the library itself. Lindera treats
+// every other value (a plain path, a `file://` URI, or anything it cannot
+// parse) as a file to open, so this deliberately does not try to parse URIs.
+fn reads_server_files(config: &TokenizerConfig) -> bool {
+    dictionary_sources(config).any(|source| !source.starts_with("embedded://"))
+}
+
+// PostgreSQL reserves reading arbitrary server files for superusers and roles
+// with the privileges of pg_read_server_files (role inheritance honoured).
+// Preload runs in the postmaster from files only an administrator can write.
+fn may_read_server_files() -> bool {
+    unsafe {
+        pg_sys::process_shared_preload_libraries_in_progress
+            || pg_sys::superuser()
+            || pg_sys::has_privs_of_role(
+                pg_sys::GetUserId(),
+                pg_sys::Oid::from(pg_sys::ROLE_PG_READ_SERVER_FILES),
+            )
+    }
+}
+
 pub struct LinderaModel {
     tokenizer: Tokenizer,
 }
 
 impl LinderaModel {
+    // Every load goes through here: creation, the first use in a backend (from
+    // the catalog, which also covers rows written directly) and preload.
+    // Authorization applies to loading; an already loaded object is reused.
     pub fn new(config: &LinderaConfig) -> Self {
-        let tokenizer = Tokenizer::from_config(&config.tokenizer_config().unwrap()).unwrap();
-        Self { tokenizer }
+        let config = config.tokenizer_config().unwrap_or_else(|e| {
+            raise_error(
+                PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+                "invalid Lindera configuration",
+                Some(e.to_string()),
+                None,
+            )
+        });
+        let privileged = may_read_server_files();
+        if !privileged && reads_server_files(&config) {
+            raise_error(
+                PgSqlErrorCode::ERRCODE_INSUFFICIENT_PRIVILEGE,
+                "permission denied to load a Lindera dictionary from a file",
+                Some(
+                    "Only roles with privileges of the \"pg_read_server_files\" role may use \
+                     Lindera dictionary or user dictionary paths."
+                        .into(),
+                ),
+                Some("Use an embedded:// dictionary."),
+            );
+        }
+        // Lindera errors can quote file names and file contents. Only roles
+        // that may read server files anyway get the details.
+        Self::build(&config).unwrap_or_else(|e| {
+            raise_error(
+                PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+                "failed to load Lindera dictionary",
+                privileged.then(|| e.to_string()),
+                None,
+            )
+        })
+    }
+
+    // Builds without the authorization check; callers must perform it first.
+    fn build(config: &TokenizerConfig) -> lindera::LinderaResult<Self> {
+        let tokenizer = Tokenizer::from_config(config)?;
+        Ok(Self { tokenizer })
     }
 }
 
 impl TokenizerModel for LinderaModel {
     fn apply(&self, token: String) -> Vec<u32> {
+        crate::budget::piece(token.len());
         self.tokenizer
             .tokenize(&token)
             .unwrap()
@@ -107,10 +180,11 @@ fn token_id(word: WordId) -> Option<u32> {
     )
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_lindera_model(name: &str, config: &str) {
     validate_new_model_name(name).unwrap();
-    let config: LinderaConfig = toml::from_str(config).unwrap();
+    let config: LinderaConfig =
+        toml::from_str(config).unwrap_or_else(|e| invalid_config("Lindera model", name, e));
 
     let insert_model = r#"
         INSERT INTO tokenizer_catalog.model (name, config) VALUES ($1, $2)
@@ -122,7 +196,7 @@ fn create_lindera_model(name: &str, config: &str) {
 
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
-            .update(insert_model, Some(1), &[name.into(), config_str.into()])
+            .update(insert_model, None, &[name.into(), config_str.into()])
             .unwrap();
 
         if tuptable.is_empty() {
@@ -134,7 +208,7 @@ fn create_lindera_model(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_lindera_model(name: &str) {
     validate_new_model_name(name).unwrap();
 
@@ -143,9 +217,7 @@ fn drop_lindera_model(name: &str) {
     "#;
 
     pgrx::Spi::connect_mut(|client| {
-        let tuptable = client
-            .update(delete_model, Some(1), &[name.into()])
-            .unwrap();
+        let tuptable = client.update(delete_model, None, &[name.into()]).unwrap();
 
         if tuptable.is_empty() {
             pgrx::warning!("Model not found: {}", name);
@@ -161,6 +233,54 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // Unit tests run without a PostgreSQL backend, so they build models
+    // without the backend authorization check.
+    fn build(config: &LinderaConfig) -> LinderaModel {
+        LinderaModel::build(&config.tokenizer_config().unwrap()).unwrap()
+    }
+
+    fn reads_files(segmenter: Value) -> bool {
+        let config = LinderaConfig {
+            inner: json!({ "segmenter": segmenter }),
+        };
+        reads_server_files(&config.tokenizer_config().unwrap())
+    }
+
+    #[test]
+    fn embedded_dictionaries_do_not_read_server_files() {
+        assert!(!reads_files(json!({"dictionary": "embedded://ipadic"})));
+        assert!(!reads_files(json!({"dictionary": {"kind": "ipadic"}})));
+        assert!(!reads_files(json!({
+            "dictionary": "embedded://ipadic",
+            "user_dictionary": "embedded://ipadic"
+        })));
+        // Lindera ignores non-string values, so they open nothing.
+        assert!(!reads_files(
+            json!({"dictionary": 1, "user_dictionary": []})
+        ));
+        assert!(!reads_files(json!({})));
+    }
+
+    #[test]
+    fn dictionary_paths_read_server_files() {
+        for segmenter in [
+            json!({"dictionary": "/etc"}),
+            json!({"dictionary": "relative/dictionary"}),
+            json!({"dictionary": "file:///etc"}),
+            json!({"dictionary": {"path": "/etc"}}),
+            json!({"dictionary": {"path": "/etc", "memmap": true}}),
+            json!({"dictionary": "embedded://ipadic", "user_dictionary": "/data/user.csv"}),
+            json!({"dictionary": "embedded://ipadic", "user_dictionary": "file:///data/user.csv"}),
+            json!({"dictionary": {"kind": "ipadic"}, "user_dictionary": {"path": "/data/user.csv"}}),
+            // Not parsed as embedded URIs: refuse rather than guess.
+            json!({"dictionary": "EMBEDDED://ipadic"}),
+            json!({"dictionary": " embedded://ipadic"}),
+            json!({"dictionary": "embedded:/ipadic"}),
+        ] {
+            assert!(reads_files(segmenter.clone()), "{segmenter}");
+        }
+    }
+
     #[cfg(feature = "lindera-ipadic")]
     #[test]
     fn user_dictionary_ids_do_not_collide_with_system_dictionary() {
@@ -170,7 +290,7 @@ mod tests {
                 "user_dictionary": concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ipadic-user.csv")
             }}),
         };
-        let model = LinderaModel::new(&config);
+        let model = build(&config);
         let words = model.tokenizer.tokenize("東京スカイツリー").unwrap();
         assert_eq!(words.len(), 1);
         let user = words[0].word_id;
@@ -261,7 +381,7 @@ mod tests {
             toml::from_str("[segmenter]\nmode = 'normal'\ndictionary = 'embedded://ipadic'")
                 .unwrap();
         for config in [legacy, native] {
-            let model = LinderaModel::new(&config);
+            let model = build(&config);
             assert_eq!(model.apply("関西国際空港限定".into()), [372982, 374178]);
         }
     }
@@ -271,7 +391,7 @@ mod tests {
     fn unknown_words_do_not_leak_unknown_dictionary_ids() {
         let config: LinderaConfig =
             toml::from_str("[segmenter]\ndictionary = 'embedded://ipadic'").unwrap();
-        let model = LinderaModel::new(&config);
+        let model = build(&config);
         assert!(model.apply("トートバッグ".into()).is_empty());
         assert_eq!(
             model.apply("関西国際空港限定トートバッグ".into()),

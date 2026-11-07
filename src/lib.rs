@@ -6,6 +6,7 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
+mod budget;
 mod cache;
 pub mod character_filter;
 pub mod model;
@@ -33,13 +34,35 @@ compile_error!("PostgreSQL version must be selected.");
 
 #[pgrx::pg_guard]
 extern "C-unwind" fn _PG_init() {
-    if unsafe { pgrx::pg_sys::IsUnderPostmaster } {
+    // Under EXEC_BACKEND, children reload preloaded libraries with
+    // IsUnderPostmaster set; only this flag identifies preloading.
+    if !unsafe { pgrx::pg_sys::process_shared_preload_libraries_in_progress } {
         pgrx::error!("pg_tokenizer must be loaded via shared_preload_libraries.");
     }
+    IS_MAIN.set(true);
+    // Library worker threads must never call into PostgreSQL.
+    utils::install_interrupt_check(|| {
+        if is_main() {
+            pgrx::check_for_interrupts!();
+        }
+    });
 
+    budget::init();
     cache::init();
     pre_tokenizer::init();
     model::init();
+}
+
+thread_local! {
+    // Set on the thread that ran _PG_init; backends inherit it with fork.
+    static IS_MAIN: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
+}
+
+// Whether this is the backend's main thread, the only thread that may call
+// PostgreSQL.
+#[must_use]
+fn is_main() -> bool {
+    IS_MAIN.get()
 }
 
 #[cfg(test)]

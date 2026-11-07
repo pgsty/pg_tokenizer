@@ -1,0 +1,22 @@
+test_replay_snapshots_and_promotion (__main__.StandbyTests.test_replay_snapshots_and_promotion) ... FAIL
+
+======================================================================
+FAIL: test_replay_snapshots_and_promotion (__main__.StandbyTests.test_replay_snapshots_and_promotion)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_standby.py", line 96, in test_replay_snapshots_and_promotion
+    self.assertEqual(analyze(reader), ["upper"])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['UPPER'] != ['upper']
+
+First differing element 0:
+'UPPER'
+'upper'
+
+- ['UPPER']
++ ['upper']
+
+----------------------------------------------------------------------
+Ran 1 test in 1.817s
+
+FAILED (failures=1)

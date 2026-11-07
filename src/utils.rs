@@ -6,7 +6,66 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use pgrx::{datum::DatumWithOid, pg_sys::panic::ErrorReportable, FromDatum, IntoDatum};
+use std::sync::OnceLock;
+
+use pgrx::datum::DatumWithOid;
+use pgrx::pg_sys::errcodes::PgSqlErrorCode;
+use pgrx::pg_sys::panic::{ErrorReport, ErrorReportable};
+use pgrx::{FromDatum, IntoDatum, PgLogLevel};
+
+/// Raise a PostgreSQL ERROR with a SQLSTATE and optional DETAIL and HINT.
+#[track_caller]
+pub fn raise_error(
+    code: PgSqlErrorCode,
+    message: impl Into<String>,
+    detail: Option<String>,
+    hint: Option<&str>,
+) -> ! {
+    let mut report = ErrorReport::new(code, message.into(), "pg_tokenizer");
+    if let Some(detail) = detail {
+        report = report.set_detail(detail);
+    }
+    if let Some(hint) = hint {
+        report = report.set_hint(hint);
+    }
+    report.report(PgLogLevel::ERROR);
+    unreachable!("ERROR reports do not return")
+}
+
+/// Raise ERRCODE_INVALID_PARAMETER_VALUE for a configuration that cannot be
+/// parsed or validated, with the parser's message as DETAIL.
+#[track_caller]
+pub fn invalid_config(kind: &str, name: &str, error: impl std::fmt::Display) -> ! {
+    raise_error(
+        PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
+        format!("invalid configuration for {kind} \"{name}\""),
+        Some(error.to_string()),
+        None,
+    )
+}
+
+static INTERRUPT_CHECK: OnceLock<fn()> = OnceLock::new();
+
+/// Installed by _PG_init. Unit tests never run it, so their executables do not
+/// reference PostgreSQL symbols through check_for_interrupts.
+pub fn install_interrupt_check(check: fn()) {
+    let _ = INTERRUPT_CHECK.set(check);
+}
+
+/// Process a pending query cancel or statement timeout. Call it only where no
+/// lock or other resource needs explicit release.
+pub fn check_for_interrupts() {
+    if let Some(check) = INTERRUPT_CHECK.get() {
+        check();
+    }
+}
+
+/// Check for interrupts at the first item and then every 1024 items of a loop.
+pub fn check_for_interrupts_every(i: usize) {
+    if i.is_multiple_of(1024) {
+        check_for_interrupts();
+    }
+}
 
 pub fn spi_get_one<T>(query: &str, args: &[DatumWithOid]) -> Option<T>
 where
@@ -25,4 +84,66 @@ where
             ),
         }
     })
+}
+
+/// Read an owned scalar using the caller's active snapshot, even after writes.
+/// pgrx's select() switches to read-write SPI once a transaction has an XID;
+/// that would give a version probe and the definition lookup different snapshots.
+pub fn catalog_one<T: FromDatum>(query: &str, args: &[DatumWithOid]) -> Option<T> {
+    use pgrx::pg_sys;
+    let query = std::ffi::CString::new(query).expect("catalog query contains no NUL");
+    let mut types: Vec<_> = args.iter().map(|arg| arg.oid()).collect();
+    let mut values: Vec<_> = args
+        .iter()
+        .map(|arg| {
+            arg.datum()
+                .map_or(pg_sys::Datum::from(0usize), |datum| datum.sans_lifetime())
+        })
+        .collect();
+    let nulls: Vec<_> = args
+        .iter()
+        .map(|arg| if arg.datum().is_some() { b' ' } else { b'n' } as std::ffi::c_char)
+        .collect();
+    pgrx::Spi::connect(|_| unsafe {
+        let status = pg_sys::SPI_execute_with_args(
+            query.as_ptr(),
+            args.len() as i32,
+            types.as_mut_ptr(),
+            values.as_mut_ptr(),
+            nulls.as_ptr(),
+            true,
+            1,
+        );
+        assert!(status >= 0, "catalog SPI query failed: {status}");
+        if pg_sys::SPI_processed == 0 {
+            return None;
+        }
+        let table = &*pg_sys::SPI_tuptable;
+        let mut is_null = false;
+        let datum = pg_sys::SPI_getbinval(*table.vals, table.tupdesc, 1, &mut is_null);
+        // Callers use owned Rust values (String, Vec<String>, i64).
+        T::from_datum(datum, is_null)
+    })
+}
+
+#[cfg(test)]
+pub(crate) mod interrupt_tests {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CHECKS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn count() {
+        CHECKS.set(CHECKS.get() + 1);
+    }
+
+    /// Run `f` and return how many interrupt checks this thread made. Every
+    /// test installs the same counting hook, so the counts are per thread.
+    pub(crate) fn count_interrupt_checks<R>(f: impl FnOnce() -> R) -> (R, usize) {
+        super::install_interrupt_check(count);
+        let before = CHECKS.get();
+        let result = f();
+        (result, CHECKS.get() - before)
+    }
 }

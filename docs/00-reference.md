@@ -22,7 +22,7 @@
 
 - `tokenizer_catalog.create_custom_model(name TEXT, config TEXT)`: Create a custom model.
 - `tokenizer_catalog.create_custom_model_tokenizer_and_trigger(tokenizer_name TEXT, model_name TEXT, text_analyzer_name TEXT, table_name TEXT, source_column TEXT, target_column TEXT [, filter TEXT])`: Create a custom model tokenizer and trigger. The optional seventh argument restricts vocabulary and embedding updates; omit it or pass `NULL` to include all rows (1.0.0). Six-argument calls remain supported.
-- `tokenizer_catalog.drop_custom_model(name TEXT)`: Drop a custom model.
+- `tokenizer_catalog.drop_custom_model(name TEXT)`: Drop a custom model. A missing model raises a WARNING, like the other drop functions; tokenizers that reference the model are not dropped.
 
 <br/>
 
@@ -37,7 +37,7 @@
 
 <br/>
 
-- `tokenizer_catalog.create_huggingface_model(name TEXT, config TEXT)`: Create a huggingface model.
+- `tokenizer_catalog.create_huggingface_model(name TEXT, config TEXT)`: Create a huggingface model. Token IDs (vocabulary, added tokens, and post-processor special tokens) must not exceed 2147483647.
 - `tokenizer_catalog.drop_huggingface_model(name TEXT)`: Drop a huggingface model.
 
 ### Tokenizer
@@ -51,7 +51,18 @@
 
 ## Configuration
 
-> We utilize `TOML` syntax to express all configurations.
+> We utilize `TOML` syntax to express all configurations. Configurations that cannot be parsed or validated, including invalid regular expressions, raise SQLSTATE `22023` (`invalid_parameter_value`) with the parser's message as DETAIL.
+
+### Analysis resource budgets (1.0.1)
+
+These positive session settings reject oversized input or expansion with SQLSTATE `54000`; results are never silently truncated. See [cancellation and resource use](07-limitation.md#cancellation-and-resource-use) for the accounting model and remaining third-party library limits.
+
+| Setting | Default | Scope |
+| --- | ---: | --- |
+| `pg_tokenizer.max_input_bytes` | 16,777,216 | UTF-8 bytes in one analyzer input |
+| `pg_tokenizer.max_output_tokens` | 1,000,000 | Tokens or model IDs in one stage |
+| `pg_tokenizer.max_output_bytes` | 67,108,864 | Token bytes plus descriptors, ID bytes, character output or ngram offsets |
+| `pg_tokenizer.max_piece_bytes` | 1,048,576 | Input to one regex or opaque library/dictionary call |
 
 ### Options for `text analyzer`
 
@@ -83,7 +94,13 @@ You can choose only one of the above options for each character filter.
 | Key        | Type    | Description                                                                            |
 | ---------- | ------- | -------------------------------------------------------------------------------------- |
 | mode       | String  | Jieba tokenizer mode, supported values: `full`, `precise`, `search`. default: `search` |
-| enable_hmm | Boolean | Whether to enable HMM, default: `true`                                                 |
+| enable_hmm | Boolean | Whether to use the HMM for unknown words in `precise` and `search` modes, default: `true`; `full` mode ignores it |
+
+- `full`: every dictionary word found in the text, overlapping (Jieba `cut_all`).
+- `precise`: the most likely segmentation, without overlaps (Jieba `cut`).
+- `search`: precise segmentation plus the dictionary words inside long words, for search indexing (Jieba `cut_for_search`).
+
+In 1.0.0 and earlier, `full` and `precise` were swapped: `full` produced precise segmentation (and honoured `enable_hmm`), while `precise` produced full-mode output. Analyzers that set `mode = "full"` or `mode = "precise"` now produce different tokens; regenerate stored token arrays, custom-model embeddings and `tsvector` values built with them, and rebuild dependent indexes. The default `search` mode is unchanged.
 
 ### Options for `token_filter`
 

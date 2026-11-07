@@ -159,21 +159,27 @@ sudo systemctl restart postgresql.service   # for pg_tokenizer running with syst
 CREATE EXTENSION pg_tokenizer;
 ```
 
-## Upgrading to 1.0.0
+## Upgrading to 1.0.1
 
-After installing the 1.0.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator:
+After installing the 1.0.1 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator:
 
 ```sql
-ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0';
+ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1';
 ```
 
-The upgrade path is available from 0.1.0 and 0.1.1. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
+The upgrade path is available from 0.1.0, 0.1.1 and 1.0.0. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
+
+1.0.1 adds a transactional version table and definition triggers, corrects all catalog writers to `PARALLEL UNSAFE`, and pins legacy `pg_dict` names. Resolve missing or ambiguous legacy names before upgrading. A custom dictionary sharing a builtin name is ambiguous too; explicitly choose its schema or `pg_catalog`. SQL signatures, custom vocabulary IDs, and on-disk data remain unchanged. New input/output budgets can reject previously accepted large documents with SQLSTATE `54000`; review [the defaults and remaining library limits](07-limitation.md#cancellation-and-resource-use) before upgrading a bulk ingestion workload. Deploy the matching library to every replica and restart it as well. The old primary-only cache path remains active until the SQL upgrade has committed and replayed.
+
+The `full` and `precise` Jieba modes were swapped in 1.0.0 and earlier. Regenerate persisted output produced with either mode and rebuild dependent indexes after upgrading; the default `search` mode is unchanged.
 
 ### Database-owner permissions
 
 Installation and upgrade grant `pg_database_owner` USAGE/CREATE on `tokenizer_catalog`, EXECUTE on its database-local functions, SELECT/INSERT/UPDATE/DELETE on catalog and model tables, and USAGE/SELECT on their sequences. Future objects created in that schema by the installing role receive the same table/sequence/function defaults; newly created custom models also explicitly grant access. The grants follow a database ownership change.
 
-A non-superuser database owner can create/drop its own custom models, analyzers, tokenizers, stopwords, and synonyms after an administrator installs the extension. Grants do not transfer table ownership: dropping a model created by a different role still needs that object's owner or an administrator. Other application roles require explicit grants; the extension does not give PUBLIC schema access or catalog write privileges. Functions continue to execute with the caller's privileges.
+A non-superuser database owner can create/drop its own custom models, analyzers, tokenizers, stopwords, and synonyms after an administrator installs the extension. Grants do not transfer table ownership: dropping a model created by a different role still needs that object's owner or an administrator. Other application roles require explicit grants; the extension does not give PUBLIC schema access or catalog write privileges. Public API functions continue to execute with the caller's privileges. The internal version trigger is SECURITY DEFINER, uses a fixed search_path, and only increments its protected counter; PUBLIC receives SELECT on that counter.
+
+Lindera dictionaries can be files on the database server. Only superusers and roles with the privileges of `pg_read_server_files` (directly or through inherited membership) may load a Lindera model whose `segmenter.dictionary` or `segmenter.user_dictionary` is a filesystem path or `file://` URI; other roles, including non-superuser database owners, can use `embedded://` dictionaries. The check runs on every load: at `create_lindera_model` and whenever a backend first loads the model from the catalog, including rows written directly to `tokenizer_catalog.model`. An object already loaded in a backend, and a model preloaded by the postmaster whose catalog definition matches, remain usable by every role. Therefore an existing model with an external dictionary now fails with SQLSTATE `42501` for an unprivileged role whose session would load it; grant `pg_read_server_files` to that role or preload the model with `add_preload_model`. Lindera's own error details (which can quote file names and contents) are reported only to roles allowed to read server files.
 
 The cluster-wide `add_preload_model` and `remove_preload_model` functions are restricted to the extension owner and explicitly authorized administrators. `PUBLIC` and `pg_database_owner` have no EXECUTE grant on these two functions. Changes to preload files are not transactional and take effect on restart. Broken preload entries now generate WARNING messages and are skipped; repair or remove the entry before expecting that model to be preloaded.
 

@@ -20,29 +20,50 @@ use huggingface::{HuggingFaceConfig, HuggingFaceModel};
 use lindera::{LinderaConfig, LinderaModel};
 use serde::{Deserialize, Serialize};
 
-use crate::utils::spi_get_one;
+use crate::utils::{catalog_one, invalid_config};
 
 pub trait TokenizerModel {
     fn apply(&self, token: String) -> Vec<u32>;
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
-        tokens
-            .into_iter()
-            .flat_map(|token| self.apply(token))
-            .collect()
+        let mut budget = crate::budget::Output::default();
+        let mut ids = Vec::new();
+        for token in tokens {
+            crate::utils::check_for_interrupts();
+            let output = self.apply(token);
+            budget.ids(output.len());
+            ids.extend(output);
+        }
+        ids
     }
 }
 pub type TokenizerModelPtr = Arc<dyn TokenizerModel + Send + Sync>;
 
 impl TokenizerModel for tokenizers::Tokenizer {
     fn apply(&self, token: String) -> Vec<u32> {
-        self.encode_fast(token, false).unwrap().get_ids().to_vec()
+        crate::budget::piece(token.len());
+        if let Some(padding) = self.get_padding() {
+            if let tokenizers::PaddingStrategy::Fixed(length) = padding.strategy {
+                crate::budget::tokens(length);
+                crate::budget::bytes(length.saturating_mul(96 + padding.pad_token.len()));
+            }
+            if let Some(multiple) = padding.pad_to_multiple_of {
+                crate::budget::tokens(multiple);
+                crate::budget::bytes(multiple.saturating_mul(96 + padding.pad_token.len()));
+            }
+        }
+        let encoded = self.encode_fast(token, false).unwrap();
+        crate::budget::Output::default().ids(encoded.get_ids().len());
+        encoded.get_ids().to_vec()
     }
 }
 
 impl TokenizerModel for tocken::tokenizer::Tokenizer {
     fn apply(&self, token: String) -> Vec<u32> {
-        self.tokenize(&token)
+        crate::budget::piece(token.len());
+        let ids = self.tokenize(&token);
+        crate::budget::tokens(ids.len());
+        ids
     }
 }
 
@@ -95,7 +116,7 @@ pub(super) fn clear_cache() {
 }
 
 fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {
-    let config: &str = spi_get_one(
+    let config: String = catalog_one(
         "SELECT config FROM tokenizer_catalog.model WHERE name = $1",
         &[name.into()],
     )?;
@@ -104,16 +125,17 @@ fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {
             return Some(preloaded.1.clone());
         }
     }
-    Some(build_model(name, &serde_json::from_str(config).unwrap()))
+    let config = serde_json::from_str(&config).unwrap_or_else(|e| invalid_config("model", name, e));
+    Some(build_model(name, &config))
 }
 
 fn get_model_config(name: &str) -> Option<ModelConfig> {
-    let config_bytes: &str = spi_get_one(
+    let config_bytes: String = catalog_one(
         "SELECT config FROM tokenizer_catalog.model WHERE name = $1",
         &[name.into()],
     )?;
 
-    serde_json::from_str(config_bytes).unwrap()
+    Some(serde_json::from_str(&config_bytes).unwrap_or_else(|e| invalid_config("model", name, e)))
 }
 
 fn build_model(name: &str, config: &ModelConfig) -> TokenizerModelPtr {

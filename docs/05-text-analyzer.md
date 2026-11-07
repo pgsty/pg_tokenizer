@@ -19,7 +19,7 @@ We support following pre tokenizers:
 
 - `regex`: Generate tokens by matching the regular expression.
 - `unicode_segmentation`: Split the text into tokens according to the [`Unicode Standard Annex #29`](https://unicode.org/reports/tr29/).
-- `jieba`: Chinese text segmentation using the [Jieba](https://github.com/messense/jieba-rs) library.
+- `jieba`: Chinese text segmentation using the [Jieba](https://github.com/messense/jieba-rs) library, in `search` (default), `precise`, or `full` mode; see [Options for `jieba`](00-reference.md#options-for-jieba). In 1.0.0 and earlier, `full` and `precise` were swapped; regenerate values produced with either mode.
 
 ## Token Filter
 
@@ -29,7 +29,7 @@ We support following token filters:
 - `stemmer`: Stem tokens using the [Snowball stemmer](https://snowballstem.org/) algorithm.
 - `stopwords`: Filter out tokens that are in the stop words list.
 - `synonym`: Replace tokens with their synonyms.
-- `pg_dict`: Process tokens using the [PostgreSQL dictionary](https://www.postgresql.org/docs/current/textsearch-dictionaries.html). You can integrate this with the PostgreSQL dictionary or other extensions that provide dictionaries.
+- `pg_dict`: Names are resolved and stored with their schema at creation in 1.0.1, and resolved again per batch after dictionary DDL. Process tokens using the [PostgreSQL dictionary](https://www.postgresql.org/docs/current/textsearch-dictionaries.html). You can integrate this with the PostgreSQL dictionary or other extensions that provide dictionaries.
 
 ### Supported algorithms for `stemmer`
 

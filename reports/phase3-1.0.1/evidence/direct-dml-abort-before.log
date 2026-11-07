@@ -1,0 +1,26 @@
+test_direct_dml_abort_does_not_reuse_a_version (__main__.IntegrationTests.test_direct_dml_abort_does_not_reuse_a_version) ... FAIL
+
+======================================================================
+FAIL: test_direct_dml_abort_does_not_reuse_a_version (__main__.IntegrationTests.test_direct_dml_abort_does_not_reuse_a_version)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106/tests/test_integration.py", line 1069, in test_direct_dml_abort_does_not_reuse_a_version
+    self.assertEqual(reader.execute(query).fetchone()[0], list('UPPER'))
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: ['upper'] != ['U', 'P', 'P', 'E', 'R']
+
+First differing element 0:
+'upper'
+'U'
+
+Second list contains 4 additional elements.
+First extra element 1:
+'P'
+
+- ['upper']
++ ['U', 'P', 'P', 'E', 'R']
+
+----------------------------------------------------------------------
+Ran 1 test in 1.033s
+
+FAILED (failures=1)

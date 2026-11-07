@@ -1,0 +1,34 @@
+{
+  "baseline_tokenizer_commit": "4d955eb499cd42ae54183577a368e81b54c91f27",
+  "vchord_commit": "77e7bf393356cce7d722894db5880626ed5800f9",
+  "bm25_commit": "8ea553270373f5270886cf5530f6134bb65b47bc",
+  "libraries": {
+    "baseline/lib/pg_tokenizer.dylib": {
+      "sha256": "007936cdd67a9e54786e35e34c2372e072d1f94071efbe1db25177583c2823c6",
+      "bytes": 80117120
+    },
+    "current/lib/pg_tokenizer.dylib": {
+      "sha256": "411166e687b30cb1555c6fb46c32cd29e3674e84746371a90cfd92d08d248d0e",
+      "bytes": 80174848
+    },
+    "current/lib/vchord.dylib": {
+      "sha256": "1294402dfe45899f3f462151557615f7eb2df64c21933553760c75c067a2030e",
+      "bytes": 7177744
+    },
+    "current/lib/vchord_bm25.dylib": {
+      "sha256": "44a4b29a5783a2b2b1cc89f68f9364a282d4a54f9618d49e2d28e01bda208765",
+      "bytes": 1554560
+    }
+  },
+  "environment": {
+    "postgres": "18.6 Homebrew",
+    "rust": "1.99.1",
+    "platform": "macOS arm64",
+    "features": [
+      "pg18",
+      "lindera-ipadic"
+    ]
+  },
+  "implementation_commit": "cddf6ac2969364f34c4029fea60367f90cafa890",
+  "generated_sql_sha256": "7f0de8cd5af8af75ab7c239800a426fcbb85d511e6c0ea4fc0824bf7add71d19"
+}

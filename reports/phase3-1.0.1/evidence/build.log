@@ -1,0 +1,6 @@
+Using FeatureFlag("pg18") and `pg_config` from /opt/homebrew/bin/pg_config
+    Building for SQL generation with features `pg18 lindera-ipadic`
+   Compiling pg_tokenizer v1.0.1 (/Users/vonng/pgsty/pg_tokenizer/.claude/worktrees/review-fixes-20261106)
+    Finished `release` profile [optimized] target(s) in 18.41s
+  Discovered 34 SQL entities: 0 schemas (0 unique), 24 functions, 0 types, 0 enums, 9 sqls, 0 ords, 0 hashes, 0 aggregates, 1 triggers
+     Writing SQL entities to /tmp/pg-tokenizer-phase3-20261107/schema.sql

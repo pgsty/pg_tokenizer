@@ -1,0 +1,14 @@
+{
+  "primary": {
+    "status": "stopped",
+    "pg_ctl_status_exit": 3
+  },
+  "before-primary": {
+    "status": "stopped",
+    "pg_ctl_status_exit": 3
+  },
+  "joint-acceptance": {
+    "status": "stopped",
+    "pg_ctl_status_exit": 3
+  }
+}

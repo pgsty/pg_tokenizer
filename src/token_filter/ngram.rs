@@ -54,22 +54,32 @@ impl TokenFilter for Ngram {
     fn apply(&self, token: String) -> Vec<String> {
         let min_gram = self.config.min_gram;
         let max_gram = self.config.max_gram;
+        let mut budget = crate::budget::Output::default();
         // N-grams count characters (Unicode scalar values), not bytes.
-        let bounds: Vec<usize> = token
-            .char_indices()
-            .map(|(offset, _)| offset)
-            .chain(std::iter::once(token.len()))
-            .collect();
+        // Do not collect an iterator with a large size hint: Vec could reserve
+        // its whole offset array before the first budget check runs.
+        let mut bounds = Vec::new();
+        budget.workspace(std::mem::size_of::<usize>());
+        for (i, (offset, _)) in token.char_indices().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
+            budget.workspace((i + 2).saturating_mul(std::mem::size_of::<usize>()));
+            bounds.push(offset);
+        }
+        bounds.push(token.len());
         let chars = bounds.len() - 1;
         let mut results = Vec::new();
         // A token shorter than min_gram has no n-grams.
         for start in 0..(chars + 1).saturating_sub(min_gram) {
             for end in (start + min_gram)..=(start + max_gram).min(chars) {
+                budget.text(bounds[end] - bounds[start]);
                 results.push(token[bounds[start]..bounds[end]].to_string());
+                // A long token has very many grams; let a cancel stop it.
+                crate::utils::check_for_interrupts_every(results.len());
             }
         }
         // A token whose length is in range is already one of the n-grams.
         if self.config.preserve_original && !(min_gram..=max_gram).contains(&chars) {
+            budget.text(token.len());
             results.push(token);
         }
         results
@@ -77,12 +87,9 @@ impl TokenFilter for Ngram {
 }
 
 impl Ngram {
-    pub fn new(config: NgramConfig) -> Self {
-        if let Err(e) = config.validate() {
-            panic!("Invalid NgramConfig: {}", e);
-        }
-
-        Ngram { config }
+    pub fn new(config: NgramConfig) -> Result<Self, validator::ValidationErrors> {
+        config.validate()?;
+        Ok(Ngram { config })
     }
 }
 
@@ -96,6 +103,7 @@ mod tests {
             min_gram,
             preserve_original,
         })
+        .unwrap()
     }
 
     #[test]
@@ -128,6 +136,15 @@ mod tests {
         assert!(ngram(1, 2, false).apply(String::new()).is_empty());
         assert_eq!(ngram(2, 3, true).apply("中".into()), ["中"]);
         assert_eq!(ngram(1, 2, true).apply(String::new()), [""]);
+    }
+
+    #[test]
+    fn checks_for_interrupts_every_1024_grams() {
+        use crate::utils::interrupt_tests::count_interrupt_checks;
+        let (grams, checks) =
+            count_interrupt_checks(|| ngram(1, 1, false).apply("a".repeat(10_000)));
+        assert_eq!(grams.len(), 10_000);
+        assert!(checks >= 10_000 / 1024); // both input offsets and output are interruptible
     }
 
     #[test]

@@ -1,0 +1,14 @@
+{
+  "cargo_fmt": "passed",
+  "taplo_fmt": "passed (0.10.0, downloaded into private artifact root)",
+  "clippy": "passed (-D warnings)",
+  "unit_tests": 31,
+  "integration_tests": 40,
+  "sqllogictest_files": 22,
+  "preload": "passed",
+  "physical_standby": "passed",
+  "preload_orders": 6,
+  "generated_sql": "matches after terminal whitespace normalization",
+  "site": "make check passed in isolated copy; six edited pages still byte-identical to checked inputs",
+  "additional_budget_subcase": "targeted test passed after full integration run"
+}
