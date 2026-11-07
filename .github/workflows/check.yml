@@ -74,10 +74,12 @@ jobs:
           sqllogictest --db "$USER" --user "$USER" './tests/**/*.slt'
       - name: Concurrency, permissions, and upgrade tests
         run: |
-          sudo cp sql/install/pg_tokenizer--0.1.[01].sql "$(pg_config --sharedir)/extension/"
+          sudo cp sql/install/pg_tokenizer--*.sql "$(pg_config --sharedir)/extension/"
           sudo cp sql/upgrade/*.sql "$(pg_config --sharedir)/extension/"
           python3 -m venv /tmp/tokenizer-tests
           /tmp/tokenizer-tests/bin/pip install 'psycopg[binary]'
           PG_TOKENIZER_TEST_DSN="host=localhost user=$USER dbname=$USER" timeout 180 /tmp/tokenizer-tests/bin/python tests/test_integration.py
       - name: Preload startup and database isolation
         run: timeout 120 /tmp/tokenizer-tests/bin/python tests/test_preload.py
+      - name: Physical standby, snapshots, promotion, and crash recovery
+        run: timeout 120 /tmp/tokenizer-tests/bin/python tests/test_standby.py

@@ -9,7 +9,8 @@
 mod to_lowercase;
 mod unicode_normalization;
 
-use std::{borrow::Cow, sync::Arc};
+use std::borrow::Cow;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use to_lowercase::ToLowercase;

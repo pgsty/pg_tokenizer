@@ -6,15 +6,13 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::{
-    collections::HashSet,
-    sync::{Arc, LazyLock},
-};
+use std::collections::HashSet;
+use std::sync::{Arc, LazyLock};
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::spi_get_one;
+use crate::utils::catalog_one;
 
 use super::TokenFilter;
 
@@ -82,12 +80,12 @@ pub(crate) fn clear_cache() {
 }
 
 fn get_stopwords_token_filter_from_database(name: &str) -> Option<StopwordsTokenFilterPtr> {
-    let config: &str = spi_get_one(
+    let config: String = catalog_one(
         "SELECT config FROM tokenizer_catalog.stopwords WHERE name = $1",
         &[name.into()],
     )?;
 
-    let stopwords = StopwordsTokenFilter::build(config);
+    let stopwords = StopwordsTokenFilter::build(&config);
     Some(Arc::new(stopwords))
 }
 
@@ -95,7 +93,7 @@ fn get_stopwords_token_filter_from_database(name: &str) -> Option<StopwordsToken
 // Keeping them fixed means a logical restore cannot change their contents.
 const BUILTIN_STOPWORDS: [&str; 3] = ["lucene_english", "nltk_english", "iso_english"];
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_stopwords(name: &str, config: &str) {
     if BUILTIN_STOPWORDS.contains(&name) {
         panic!("Stopwords name is reserved for a built-in list: {}", name);
@@ -109,7 +107,7 @@ fn create_stopwords(name: &str, config: &str) {
                 INSERT INTO tokenizer_catalog.stopwords (name, config) VALUES ($1, $2)
                 ON CONFLICT (name) DO NOTHING RETURNING 1
                 "#,
-                Some(1),
+                None,
                 &[name.into(), config.into()],
             )
             .unwrap();
@@ -128,7 +126,7 @@ fn create_stopwords(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_stopwords(name: &str) {
     if BUILTIN_STOPWORDS.contains(&name) {
         panic!("Built-in stopwords cannot be dropped: {}", name);
@@ -137,7 +135,7 @@ fn drop_stopwords(name: &str) {
         let tuptable = client
             .update(
                 "DELETE FROM tokenizer_catalog.Stopwords WHERE name = $1 RETURNING 1",
-                Some(1),
+                None,
                 &[name.into()],
             )
             .unwrap();
@@ -169,7 +167,7 @@ fn create_stopwords_when_init(name: &str, config: &str) {
                 INSERT INTO tokenizer_catalog.stopwords (name, config) VALUES ($1, $2)
                 ON CONFLICT (name) DO NOTHING
                 "#,
-                Some(1),
+                None,
                 &[name.into(), config.into()],
             )
             .unwrap();

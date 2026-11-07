@@ -6,6 +6,7 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
+mod budget;
 mod cache;
 pub mod character_filter;
 pub mod model;
@@ -46,6 +47,7 @@ extern "C-unwind" fn _PG_init() {
         }
     });
 
+    budget::init();
     cache::init();
     pre_tokenizer::init();
     model::init();

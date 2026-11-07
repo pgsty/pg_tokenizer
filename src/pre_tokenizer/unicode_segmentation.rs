@@ -14,6 +14,6 @@ pub struct UnicodeSegmentationPretokenizer;
 
 impl PreTokenizer for UnicodeSegmentationPretokenizer {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        text.unicode_words().collect()
+        crate::budget::borrowed(text.unicode_words())
     }
 }

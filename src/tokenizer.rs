@@ -12,14 +12,12 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use validator::{Validate, ValidationError};
 
-use crate::{
-    character_filter::CharacterFilterConfig,
-    model::{get_model, TokenizerModelPtr},
-    pre_tokenizer::PreTokenizerConfig,
-    text_analyzer::{get_text_analyzer, TextAnalyzer, TextAnalyzerConfig, TextAnalyzerPtr},
-    token_filter::TokenFilterConfig,
-    utils::{invalid_config, raise_error, spi_get_one},
-};
+use crate::character_filter::CharacterFilterConfig;
+use crate::model::{get_model, TokenizerModelPtr};
+use crate::pre_tokenizer::PreTokenizerConfig;
+use crate::text_analyzer::{get_text_analyzer, TextAnalyzer, TextAnalyzerConfig, TextAnalyzerPtr};
+use crate::token_filter::TokenFilterConfig;
+use crate::utils::{catalog_one, invalid_config, raise_error};
 
 #[derive(Clone, Serialize, Deserialize, Validate)]
 #[validate(schema(function = "TokenizerConfig::validate_text_analyzer"))]
@@ -118,13 +116,13 @@ pub(crate) fn clear_cache() {
 }
 
 fn get_tokenizer_from_database(name: &str) -> Option<TokenizerPtr> {
-    let config_bytes: &str = spi_get_one(
+    let config_bytes: String = catalog_one(
         "SELECT config FROM tokenizer_catalog.tokenizer WHERE name = $1",
         &[name.into()],
     )?;
 
-    let config: TokenizerConfig =
-        serde_json::from_str(config_bytes).unwrap_or_else(|e| invalid_config("tokenizer", name, e));
+    let config: TokenizerConfig = serde_json::from_str(&config_bytes)
+        .unwrap_or_else(|e| invalid_config("tokenizer", name, e));
     // Validate like create_tokenizer: rows written directly to the catalog
     // could otherwise combine text_analyzer with inline options, which
     // Tokenizer::build would silently ignore.
@@ -134,14 +132,15 @@ fn get_tokenizer_from_database(name: &str) -> Option<TokenizerPtr> {
     Some(Arc::new(Tokenizer::build(config)))
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_tokenizer(name: &str, config: &str) {
-    let config: TokenizerConfig =
+    let mut config: TokenizerConfig =
         toml::from_str(config).unwrap_or_else(|e| invalid_config("tokenizer", name, e));
     if let Err(e) = config.validate() {
         invalid_config("tokenizer", name, e);
     }
 
+    crate::token_filter::qualify_dictionaries(&mut config.token_filters);
     let config_str = serde_json::to_string(&config).unwrap();
     let tokenizer = Tokenizer::build(config);
 
@@ -152,7 +151,7 @@ fn create_tokenizer(name: &str, config: &str) {
                 INSERT INTO tokenizer_catalog.tokenizer (name, config) VALUES ($1, $2)
                 ON CONFLICT (name) DO NOTHING RETURNING 1
                 "#,
-                Some(1),
+                None,
                 &[name.into(), config_str.into()],
             )
             .unwrap();
@@ -166,13 +165,13 @@ fn create_tokenizer(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_tokenizer(name: &str) {
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
             .update(
                 "DELETE FROM tokenizer_catalog.tokenizer WHERE name = $1 RETURNING 1",
-                Some(1),
+                None,
                 &[name.into()],
             )
             .unwrap();
@@ -190,6 +189,8 @@ fn drop_tokenizer(name: &str) {
 pub fn tokenize(text: &str, tokenizer_name: &str) -> Vec<i32> {
     let tokenizer = get_tokenizer(tokenizer_name);
     let ids = tokenizer.tokenize(text);
+    let mut budget = crate::budget::Output::default();
+    budget.ids(ids.len());
     // Hugging Face imports reject larger IDs; models stored before that check
     // can still contain them.
     ids.into_iter()

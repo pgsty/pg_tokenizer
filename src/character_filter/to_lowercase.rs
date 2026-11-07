@@ -14,6 +14,13 @@ pub struct ToLowercase;
 
 impl CharacterFilter for ToLowercase {
     fn apply(&self, text: &mut Cow<str>) {
+        // Preserve str::to_lowercase's context-sensitive final sigma rule.
+        let mut bytes = 0usize;
+        for (i, ch) in text.chars().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
+            bytes = bytes.saturating_add(ch.to_lowercase().map(char::len_utf8).sum::<usize>());
+        }
+        crate::budget::bytes(bytes);
         *text = Cow::Owned(text.to_lowercase());
     }
 }

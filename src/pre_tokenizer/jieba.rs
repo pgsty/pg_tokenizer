@@ -55,27 +55,27 @@ struct JiebaSearch {
 
 impl PreTokenizer for JiebaFull {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        JIEBA.cut_all(text).into_iter().map(|t| t.word).collect()
+        crate::budget::piece(text.len());
+        crate::budget::borrowed(JIEBA.cut_all(text).into_iter().map(|t| t.word))
     }
 }
 
 impl PreTokenizer for JiebaPrecise {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        JIEBA
-            .cut(text, self.enable_hmm)
-            .into_iter()
-            .map(|t| t.word)
-            .collect()
+        crate::budget::piece(text.len());
+        crate::budget::borrowed(JIEBA.cut(text, self.enable_hmm).into_iter().map(|t| t.word))
     }
 }
 
 impl PreTokenizer for JiebaSearch {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        JIEBA
-            .cut_for_search(text, self.enable_hmm)
-            .into_iter()
-            .map(|t| t.word)
-            .collect()
+        crate::budget::piece(text.len());
+        crate::budget::borrowed(
+            JIEBA
+                .cut_for_search(text, self.enable_hmm)
+                .into_iter()
+                .map(|t| t.word),
+        )
     }
 }
 

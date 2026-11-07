@@ -8,14 +8,10 @@
 
 use std::sync::OnceLock;
 
-use pgrx::{
-    datum::DatumWithOid,
-    pg_sys::{
-        errcodes::PgSqlErrorCode,
-        panic::{ErrorReport, ErrorReportable},
-    },
-    FromDatum, IntoDatum, PgLogLevel,
-};
+use pgrx::datum::DatumWithOid;
+use pgrx::pg_sys::errcodes::PgSqlErrorCode;
+use pgrx::pg_sys::panic::{ErrorReport, ErrorReportable};
+use pgrx::{FromDatum, IntoDatum, PgLogLevel};
 
 /// Raise a PostgreSQL ERROR with a SQLSTATE and optional DETAIL and HINT.
 #[track_caller]
@@ -87,6 +83,46 @@ where
                 e, query
             ),
         }
+    })
+}
+
+/// Read an owned scalar using the caller's active snapshot, even after writes.
+/// pgrx's select() switches to read-write SPI once a transaction has an XID;
+/// that would give a version probe and the definition lookup different snapshots.
+pub fn catalog_one<T: FromDatum>(query: &str, args: &[DatumWithOid]) -> Option<T> {
+    use pgrx::pg_sys;
+    let query = std::ffi::CString::new(query).expect("catalog query contains no NUL");
+    let mut types: Vec<_> = args.iter().map(|arg| arg.oid()).collect();
+    let mut values: Vec<_> = args
+        .iter()
+        .map(|arg| {
+            arg.datum()
+                .map_or(pg_sys::Datum::from(0usize), |datum| datum.sans_lifetime())
+        })
+        .collect();
+    let nulls: Vec<_> = args
+        .iter()
+        .map(|arg| if arg.datum().is_some() { b' ' } else { b'n' } as std::ffi::c_char)
+        .collect();
+    pgrx::Spi::connect(|_| unsafe {
+        let status = pg_sys::SPI_execute_with_args(
+            query.as_ptr(),
+            args.len() as i32,
+            types.as_mut_ptr(),
+            values.as_mut_ptr(),
+            nulls.as_ptr(),
+            true,
+            1,
+        );
+        assert!(status >= 0, "catalog SPI query failed: {status}");
+        if pg_sys::SPI_processed == 0 {
+            return None;
+        }
+        let table = &*pg_sys::SPI_tuptable;
+        let mut is_null = false;
+        let datum = pg_sys::SPI_getbinval(*table.vals, table.tupdesc, 1, &mut is_null);
+        // Callers use owned Rust values (String, Vec<String>, i64).
+        T::from_datum(datum, is_null)
     })
 }
 

@@ -62,7 +62,8 @@ class IntegrationTests(unittest.TestCase):
         version = (
             "0.1.0"
             if "from_010" in self._testMethodName
-            else ("0.1.1" if "upgrade" in self._testMethodName else "1.0.0")
+            else ("1.0.0" if "from_100" in self._testMethodName else
+                  ("0.1.1" if "upgrade" in self._testMethodName else os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.0.1")))
         )
         self.db.execute(
             sql.SQL("CREATE EXTENSION pg_tokenizer VERSION {}").format(
@@ -535,7 +536,7 @@ class IntegrationTests(unittest.TestCase):
         original = self.db.execute(
             "SELECT id, token FROM model_race ORDER BY id"
         ).fetchall()
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
         self.assertEqual(
             self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(),
             original,
@@ -577,12 +578,12 @@ class IntegrationTests(unittest.TestCase):
                     "SELECT has_schema_privilege(current_user, 'tokenizer_catalog', 'USAGE')"
                 ).fetchone()[0]
             )
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
         self.assertEqual(
             self.db.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
             ).fetchone()[0],
-            "1.0.0",
+            "1.0.1",
         )
         self.assertEqual(
             self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(),
@@ -629,9 +630,9 @@ class IntegrationTests(unittest.TestCase):
         self.assert_embeddings(self.db)
         # All supported old versions have an upgrade path in standard pgrx packages.
         path = self.db.execute(
-            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.0.0'"
+            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.0.1'"
         ).fetchone()[0]
-        self.assertEqual(path, "0.1.0--0.1.1--1.0.0")
+        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.0.1")
 
         # A fresh installation and an upgraded installation must expose the same
         # function signatures, defaults, volatility, language and implementation.
@@ -834,6 +835,9 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("SELECT create_tokenizer('slow_snapshot', 'model = \"bert_base_uncased\"')")
         with self.connect() as reader:
             reader.execute("BEGIN")
+            # pgrx select() otherwise silently takes fresh snapshots after an
+            # XID is assigned. Definitions must still use this statement's snapshot.
+            reader.execute("CREATE TEMP TABLE snapshot_write (n integer)")
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(
                     lambda: reader.execute(
@@ -869,7 +873,7 @@ class IntegrationTests(unittest.TestCase):
         self.make_model(self.db)
         self.db.execute("INSERT INTO race(body) VALUES ('alpha beta')")
         original = self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall()
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
         self.assertEqual(self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(), original)
         self.db.execute("INSERT INTO race(body) VALUES ('gamma alpha')")
         self.assert_embeddings(self.db)
@@ -921,18 +925,162 @@ class IntegrationTests(unittest.TestCase):
                 "SELECT count(*) FROM parallel_docs WHERE analyze_to_tsvector(body, 'parallel_words') @@ 'hello'"
             ).fetchone()[0], 1000)
 
+    def test_catalog_writers_are_parallel_unsafe(self):
+        writers = self.db.execute("""
+            SELECT proname, proparallel FROM pg_proc
+            WHERE pronamespace = 'tokenizer_catalog'::regnamespace
+              AND (proname LIKE 'create_%' OR proname LIKE 'drop_%'
+                   OR proname IN ('add_preload_model', 'remove_preload_model',
+                                  'custom_model_insert_trigger',
+                                  'custom_model_tokenizer_set_target_column_trigger'))
+            ORDER BY proname
+        """).fetchall()
+        self.assertGreaterEqual(len(writers), 19)
+        self.assertEqual([(name, flag) for name, flag in writers if flag != 'u'], [])
+        self.db.execute("CREATE TABLE writer_plan AS SELECT g FROM generate_series(1, 10) g")
+        self.db.execute("SET min_parallel_table_scan_size = 0")
+        self.db.execute("SET parallel_setup_cost = 0")
+        self.db.execute("SET parallel_tuple_cost = 0")
+        setting = "debug_parallel_query" if self.db.info.server_version >= 160000 else "force_parallel_mode"
+        self.db.execute(f"SET {setting} = on")
+        plan = self.db.execute("""EXPLAIN (FORMAT JSON)
+            SELECT create_stopwords('parallel_' || g, 'the') FROM writer_plan""").fetchone()[0]
+        self.assertNotIn('Gather', json.dumps(plan))
+
+    def test_pg_dict_pins_schema(self):
+        self.db.execute("CREATE SCHEMA dictionary_a; CREATE SCHEMA dictionary_b")
+        self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_a.words (TEMPLATE = snowball, LANGUAGE = english)")
+        self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_b.words (TEMPLATE = simple)")
+        self.db.execute("SET search_path = dictionary_a, tokenizer_catalog")
+        self.db.execute("SELECT create_text_analyzer('dict_bound', '[[token_filters]]\npg_dict = \"words\"')")
+        query = "SELECT tokenizer_catalog.apply_text_analyzer('running', 'dict_bound')"
+        self.assertEqual(self.db.execute(query).fetchone()[0], ['run'])
+        with self.connect() as reader:
+            reader.execute("SET search_path = dictionary_b, tokenizer_catalog")
+            self.assertEqual(reader.execute(query).fetchone()[0], ['run'])
+
+    def test_pg_dict_refreshes_oid_after_ddl(self):
+        self.db.execute("CREATE SCHEMA dictionary_a")
+        self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_a.words (TEMPLATE = snowball, LANGUAGE = english)")
+        self.db.execute("SELECT create_text_analyzer('dict_bound', '[[token_filters]]\npg_dict = \"dictionary_a.words\"')")
+        query = "SELECT tokenizer_catalog.apply_text_analyzer('running', 'dict_bound')"
+        with self.connect() as reader:
+            self.assertEqual(reader.execute(query).fetchone()[0], ['run'])
+            # The legacy epoch path discards objects after the first observed
+            # epoch. Warm a second statement so DDL encounters a retained OID.
+            self.assertEqual(reader.execute(query).fetchone()[0], ['run'])
+            with self.db.transaction():
+                self.db.execute("DROP TEXT SEARCH DICTIONARY dictionary_a.words")
+                self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_a.words (TEMPLATE = simple)")
+            self.assertEqual(reader.execute(query).fetchone()[0], ['running'])
+            self.db.execute("ALTER TEXT SEARCH DICTIONARY dictionary_a.words (ACCEPT = false)")
+            self.assertEqual(reader.execute(query.replace('running', 'UPPER')).fetchone()[0], ['UPPER'])
+
+    def test_analysis_budgets(self):
+        self.db.execute("SELECT create_text_analyzer('bounded_plain', '')")
+        self.db.execute("SELECT create_text_analyzer('bounded_grams', '[[token_filters]]\nngram = {min_gram = 1, max_gram = 2}')")
+        self.db.execute("SELECT create_text_analyzer('bounded_regex', 'pre_tokenizer = {regex = \".\"}')")
+        cases = [
+            ('max_input_bytes', 1024, 'bounded_plain', 'a' * 1025),
+            ('max_output_tokens', 8, 'bounded_grams', 'abcdef'),
+            ('max_output_tokens', 8, 'bounded_regex', 'abcdefghi'),
+            ('max_output_bytes', 64, 'bounded_plain', 'a' * 65),
+            ('max_piece_bytes', 8, 'bounded_regex', 'abcdefghi'),
+        ]
+        for setting, limit, analyzer, text in cases:
+            with self.subTest(setting=setting, analyzer=analyzer):
+                self.db.execute(f"SET pg_tokenizer.{setting} = {limit}")
+                try:
+                    with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+                        self.db.execute("SELECT apply_text_analyzer(%s, %s)", (text, analyzer))
+                    self.assertEqual(self.db.execute('SELECT 1').fetchone()[0], 1)
+                finally:
+                    self.db.execute(f"RESET pg_tokenizer.{setting}")
+
+    def test_huggingface_padding_budget(self):
+        config = json.dumps({
+            'model': {'type': 'WordLevel', 'vocab': {'[UNK]': 0, 'hello': 1}, 'unk_token': '[UNK]'},
+            'padding': {'strategy': {'Fixed': 1000}, 'direction': 'Right',
+                        'pad_to_multiple_of': None, 'pad_id': 0, 'pad_type_id': 0, 'pad_token': '[PAD]'},
+        })
+        self.db.execute("SELECT create_huggingface_model('pad_budget', %s)", (config,))
+        self.db.execute("SELECT create_tokenizer('pad_budget', 'model = \"pad_budget\"')")
+        self.db.execute("SET pg_tokenizer.max_output_tokens = 8")
+        with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+            self.db.execute("SELECT tokenize('hello', 'pad_budget')")
+
+    def test_upgrade_from_100_pins_dictionary_names(self):
+        self.db.execute("CREATE SCHEMA dictionary_upgrade")
+        self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_upgrade.words (TEMPLATE = simple)")
+        # Simulate a pre-1.0.1 catalog without relying on the new create API.
+        self.db.execute("INSERT INTO tokenizer_catalog.text_analyzer VALUES ('legacy_dict', %s)",
+                        (json.dumps({'token_filters': [{'pg_dict': 'words'}]}),))
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT config::jsonb->'token_filters'->0->>'pg_dict' FROM tokenizer_catalog.text_analyzer WHERE name='legacy_dict'").fetchone()[0], 'dictionary_upgrade.words')
+        self.assertEqual(self.db.execute("SELECT apply_text_analyzer('UPPER','legacy_dict')").fetchone()[0], ['upper'])
+        self.assertEqual(self.db.execute("SELECT count(*) FROM tokenizer_catalog.definition_version").fetchone()[0], 1)
+        self.test_catalog_writers_are_parallel_unsafe()
+
+    def test_upgrade_from_100_rejects_ambiguous_dictionary(self):
+        self.db.execute("CREATE SCHEMA dictionary_a; CREATE SCHEMA dictionary_b")
+        for schema in ('dictionary_a', 'dictionary_b'):
+            self.db.execute(sql.SQL("CREATE TEXT SEARCH DICTIONARY {}.words (TEMPLATE = simple)").format(sql.Identifier(schema)))
+        self.db.execute("INSERT INTO tokenizer_catalog.text_analyzer VALUES ('ambiguous_dict', %s)",
+                        (json.dumps({'token_filters': [{'pg_dict': 'words'}]}),))
+        with self.assertRaisesRegex(psycopg.errors.RaiseException, 'missing or ambiguous'):
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'").fetchone()[0], '1.0.0')
+        self.db.execute("UPDATE tokenizer_catalog.text_analyzer SET config=%s WHERE name='ambiguous_dict'",
+                        (json.dumps({'token_filters': [{'pg_dict': 'dictionary_a.words'}]}),))
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+
+    def test_version_counter_permissions_and_direct_dml(self):
+        self.db.execute("SELECT create_text_analyzer('versioned', '')")
+        with self.connect() as reader, self.connect(user=self.owner) as owner:
+            query = "SELECT apply_text_analyzer('UPPER','versioned')"
+            self.assertEqual(reader.execute(query).fetchone()[0], ['UPPER'])
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                owner.execute("UPDATE tokenizer_catalog.definition_version SET version = 0")
+            self.assertFalse(owner.execute("SELECT has_function_privilege('tokenizer_catalog._bump_definition_version()', 'EXECUTE')").fetchone()[0])
+            owner.execute("UPDATE tokenizer_catalog.text_analyzer SET config=%s WHERE name='versioned'",
+                          (json.dumps({'character_filters': ['to_lowercase']}),))
+            self.assertEqual(reader.execute(query).fetchone()[0], ['upper'])
+            owner.execute('BEGIN')
+            owner.execute("SAVEPOINT definition_change")
+            owner.execute("DELETE FROM tokenizer_catalog.text_analyzer WHERE name='versioned'")
+            owner.execute("ROLLBACK TO definition_change")
+            owner.execute('COMMIT')
+            self.assertEqual(reader.execute(query).fetchone()[0], ['upper'])
+
+    def test_direct_dml_abort_does_not_reuse_a_version(self):
+        self.db.execute("SELECT create_text_analyzer('version_reuse', '')")
+        query = "SELECT apply_text_analyzer('UPPER', 'version_reuse')"
+        with self.connect() as reader:
+            self.assertEqual(reader.execute(query).fetchone()[0], ['UPPER'])
+            reader.execute('BEGIN')
+            reader.execute("UPDATE tokenizer_catalog.text_analyzer SET config=%s WHERE name='version_reuse'",
+                           (json.dumps({'character_filters': ['to_lowercase']}),))
+            self.assertEqual(reader.execute(query).fetchone()[0], ['upper'])
+            aborted_version = reader.execute('SELECT version FROM tokenizer_catalog.definition_version').fetchone()[0]
+            reader.execute('ROLLBACK')
+            # Reuse the rolled-back counter value with a different definition.
+            self.db.execute("UPDATE tokenizer_catalog.text_analyzer SET config=%s WHERE name='version_reuse'",
+                            (json.dumps({'token_filters': [{'ngram': {'min_gram': 1, 'max_gram': 1}}]}),))
+            self.assertEqual(self.db.execute('SELECT version FROM tokenizer_catalog.definition_version').fetchone()[0], aborted_version)
+            self.assertEqual(reader.execute(query).fetchone()[0], list('UPPER'))
+
     def test_upgrade_refuses_immutable_dependents(self):
         self.db.execute("SELECT create_text_analyzer('indexed_words', 'pre_tokenizer = \"unicode_segmentation\"')")
         self.db.execute("CREATE TABLE indexed_docs (body text)")
         self.db.execute("CREATE INDEX indexed_terms ON indexed_docs USING gin (apply_text_analyzer(body, 'indexed_words'))")
         with self.assertRaises(psycopg.errors.RaiseException):
-            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0'")
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
         self.assertEqual(
             self.db.execute("SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'").fetchone()[0],
             "0.1.1",
         )
         self.db.execute("DROP INDEX indexed_terms")
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
 
 
     def test_logical_dump_restores_definitions(self):
@@ -1047,7 +1195,7 @@ $$)""")
         self.db.execute("UPDATE tokenizer_catalog.stopwords SET config = 'custom' WHERE name = 'lucene_english'")
         notices = []
         self.db.add_notice_handler(lambda d: notices.append((d.severity_nonlocalized, d.message_primary)))
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.0'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
         self.assertEqual(
             [n for n in notices if n[0] == "WARNING"],
             [("WARNING", "stopwords lucene_english differ from the shipped lists")],

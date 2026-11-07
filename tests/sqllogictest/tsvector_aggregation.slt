@@ -5,6 +5,11 @@
 statement ok
 BEGIN;
 
+# Exercise repeated-lexeme aggregation beyond the default opaque-call budget.
+# Admission limits have separate deterministic integration tests.
+statement ok
+SET LOCAL pg_tokenizer.max_piece_bytes = 4000000;
+
 statement ok
 SELECT tokenizer_catalog.create_text_analyzer('agg_words', $$
 pre_tokenizer = "unicode_segmentation"

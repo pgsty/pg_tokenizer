@@ -11,7 +11,8 @@ use std::sync::Arc;
 use anyhow::Context;
 use lindera::dictionary::{DictionaryKind, WordId};
 use lindera_analysis::tokenizer::{Tokenizer, TokenizerConfig};
-use pgrx::pg_sys::{self, errcodes::PgSqlErrorCode};
+use pgrx::pg_sys::errcodes::PgSqlErrorCode;
+use pgrx::pg_sys::{self};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -147,6 +148,7 @@ impl LinderaModel {
 
 impl TokenizerModel for LinderaModel {
     fn apply(&self, token: String) -> Vec<u32> {
+        crate::budget::piece(token.len());
         self.tokenizer
             .tokenize(&token)
             .unwrap()
@@ -178,7 +180,7 @@ fn token_id(word: WordId) -> Option<u32> {
     )
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_lindera_model(name: &str, config: &str) {
     validate_new_model_name(name).unwrap();
     let config: LinderaConfig =
@@ -194,7 +196,7 @@ fn create_lindera_model(name: &str, config: &str) {
 
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
-            .update(insert_model, Some(1), &[name.into(), config_str.into()])
+            .update(insert_model, None, &[name.into(), config_str.into()])
             .unwrap();
 
         if tuptable.is_empty() {
@@ -206,7 +208,7 @@ fn create_lindera_model(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_lindera_model(name: &str) {
     validate_new_model_name(name).unwrap();
 
@@ -215,9 +217,7 @@ fn drop_lindera_model(name: &str) {
     "#;
 
     pgrx::Spi::connect_mut(|client| {
-        let tuptable = client
-            .update(delete_model, Some(1), &[name.into()])
-            .unwrap();
+        let tuptable = client.update(delete_model, None, &[name.into()]).unwrap();
 
         if tuptable.is_empty() {
             pgrx::warning!("Model not found: {}", name);

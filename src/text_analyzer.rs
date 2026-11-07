@@ -6,21 +6,17 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock},
-};
+use std::borrow::Cow;
+use std::sync::{Arc, LazyLock};
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
-use crate::{
-    character_filter::{get_character_filter, CharacterFilterConfig, CharacterFilterPtr},
-    pre_tokenizer::{get_pre_tokenizer, PreTokenizerConfig, PreTokenizerPtr},
-    token_filter::{get_token_filter, TokenFilterConfig, TokenFilterPtr},
-    utils::{check_for_interrupts, invalid_config, spi_get_one},
-};
+use crate::character_filter::{get_character_filter, CharacterFilterConfig, CharacterFilterPtr};
+use crate::pre_tokenizer::{get_pre_tokenizer, PreTokenizerConfig, PreTokenizerPtr};
+use crate::token_filter::{get_token_filter, TokenFilterConfig, TokenFilterPtr};
+use crate::utils::{catalog_one, check_for_interrupts, invalid_config};
 
 #[derive(Clone, Serialize, Deserialize, Validate)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +58,7 @@ impl TextAnalyzer {
     }
 
     pub fn apply(&self, text: &str) -> Vec<String> {
+        crate::budget::input(text.len());
         // Let a statement timeout or cancel stop the pipeline between stages;
         // token filters also check per token.
         let mut text = Cow::Borrowed(text);
@@ -77,14 +74,19 @@ impl TextAnalyzer {
             None => vec![text],
         };
         check_for_interrupts();
+        let mut budget = crate::budget::Output::default();
         let mut tokens = pre_tokenized
             .into_iter()
-            .map(|s| s.to_string())
+            .map(|s| {
+                budget.text(s.len());
+                s.to_string()
+            })
             .collect::<Vec<_>>();
 
         for filter in &self.token_filters {
             check_for_interrupts();
             tokens = filter.apply_batch(tokens);
+            crate::budget::text(&tokens);
         }
 
         tokens
@@ -125,24 +127,25 @@ pub(crate) fn clear_cache() {
 }
 
 fn get_text_analyzer_from_database(name: &str) -> Option<TextAnalyzerPtr> {
-    let config: &str = spi_get_one(
+    let config: String = catalog_one(
         "SELECT config FROM tokenizer_catalog.text_analyzer WHERE name = $1",
         &[name.into()],
     )?;
 
     let config: TextAnalyzerConfig =
-        serde_json::from_str(config).unwrap_or_else(|e| invalid_config("text analyzer", name, e));
+        serde_json::from_str(&config).unwrap_or_else(|e| invalid_config("text analyzer", name, e));
     Some(Arc::new(TextAnalyzer::build(config)))
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_text_analyzer(name: &str, config: &str) {
-    let config: TextAnalyzerConfig =
+    let mut config: TextAnalyzerConfig =
         toml::from_str(config).unwrap_or_else(|e| invalid_config("text analyzer", name, e));
     if let Err(e) = config.validate() {
         invalid_config("text analyzer", name, e);
     }
 
+    crate::token_filter::qualify_dictionaries(&mut config.token_filters);
     let config_str = serde_json::to_string(&config).unwrap();
     let text_analyzer = TextAnalyzer::build(config);
 
@@ -153,7 +156,7 @@ fn create_text_analyzer(name: &str, config: &str) {
                 INSERT INTO tokenizer_catalog.text_analyzer (name, config) VALUES ($1, $2)
                 ON CONFLICT (name) DO NOTHING RETURNING 1
                 "#,
-                Some(1),
+                None,
                 &[name.into(), config_str.into()],
             )
             .unwrap();
@@ -167,13 +170,13 @@ fn create_text_analyzer(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_text_analyzer(name: &str) {
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
             .update(
                 "DELETE FROM tokenizer_catalog.text_analyzer WHERE name = $1 RETURNING 1",
-                Some(1),
+                None,
                 &[name.into()],
             )
             .unwrap();

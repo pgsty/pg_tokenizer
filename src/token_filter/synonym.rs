@@ -6,15 +6,13 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, LazyLock},
-};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, LazyLock};
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::utils::spi_get_one;
+use crate::utils::catalog_one;
 
 use super::TokenFilter;
 
@@ -53,6 +51,7 @@ impl SynonymTokenFilter {
 impl TokenFilter for SynonymTokenFilter {
     fn apply(&self, token: String) -> Vec<String> {
         if let Some(synonym) = self.synonyms.get(&token) {
+            crate::budget::bytes(synonym.len().saturating_add(std::mem::size_of::<String>()));
             vec![synonym.clone()]
         } else {
             vec![token]
@@ -93,16 +92,16 @@ pub(crate) fn clear_cache() {
 }
 
 fn get_synonym_token_filter_from_database(name: &str) -> Option<SynonymTokenFilterPtr> {
-    let config: &str = spi_get_one(
+    let config: String = catalog_one(
         "SELECT config FROM tokenizer_catalog.synonym WHERE name = $1",
         &[name.into()],
     )?;
 
-    let synonym = SynonymTokenFilter::build(config);
+    let synonym = SynonymTokenFilter::build(&config);
     Some(Arc::new(synonym))
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_synonym(name: &str, config: &str) {
     let synonym = SynonymTokenFilter::build(config);
 
@@ -113,7 +112,7 @@ fn create_synonym(name: &str, config: &str) {
                 INSERT INTO tokenizer_catalog.synonym (name, config) VALUES ($1, $2)
                 ON CONFLICT (name) DO NOTHING RETURNING 1
                 "#,
-                Some(1),
+                None,
                 &[name.into(), config.into()],
             )
             .unwrap();
@@ -132,13 +131,13 @@ fn create_synonym(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_synonym(name: &str) {
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
             .update(
                 "DELETE FROM tokenizer_catalog.synonym WHERE name = $1 RETURNING 1",
-                Some(1),
+                None,
                 &[name.into()],
             )
             .unwrap();

@@ -6,20 +6,20 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::{collections::HashMap, ffi::CStr, sync::Arc};
+use std::collections::HashMap;
+use std::ffi::CStr;
+use std::sync::Arc;
 
-use pgrx::{
-    pg_sys::{self, errcodes::PgSqlErrorCode, panic::ErrorReportable},
-    prelude::PgHeapTuple,
-    spi::{quote_identifier, quote_literal},
-    IntoDatum, WhoAllocated,
-};
+use pgrx::pg_sys::errcodes::PgSqlErrorCode;
+use pgrx::pg_sys::panic::ErrorReportable;
+use pgrx::pg_sys::{self};
+use pgrx::prelude::PgHeapTuple;
+use pgrx::spi::{quote_identifier, quote_literal};
+use pgrx::{IntoDatum, WhoAllocated};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    text_analyzer::get_text_analyzer,
-    utils::{invalid_config, raise_error, spi_get_one},
-};
+use crate::text_analyzer::get_text_analyzer;
+use crate::utils::{invalid_config, raise_error, spi_get_one};
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
 
@@ -230,7 +230,7 @@ fn create_custom_model(name: &str, config: &str) {
         let sequence: String = client
             .select(
                 "SELECT pg_catalog.pg_get_serial_sequence($1, 'id')",
-                Some(1),
+                None,
                 &[format!("tokenizer_catalog.\"model_{name}\"").into()],
             )
             .unwrap()
@@ -316,7 +316,10 @@ fn split_long_token(token: String) -> Vec<String> {
     if token.len() <= MAX_TOKEN_LENGTH {
         return vec![token];
     }
-    let mut pieces = Vec::with_capacity(token.len().div_ceil(MAX_TOKEN_LENGTH - 3));
+    let mut budget = crate::budget::Output::default();
+    let capacity = token.len().div_ceil(MAX_TOKEN_LENGTH - 3);
+    budget.workspace(capacity.saturating_mul(std::mem::size_of::<String>()));
+    let mut pieces = Vec::with_capacity(capacity);
     let mut rest = token.as_str();
     while rest.len() > MAX_TOKEN_LENGTH {
         // A character is at most 4 bytes, so a boundary exists in the last 4.
@@ -325,9 +328,12 @@ fn split_long_token(token: String) -> Vec<String> {
             .find(|&end| rest.is_char_boundary(end))
             .expect("a UTF-8 character is at most 4 bytes");
         let (piece, tail) = rest.split_at(end);
+        budget.text(piece.len());
+        crate::utils::check_for_interrupts_every(pieces.len());
         pieces.push(piece.to_string());
         rest = tail;
     }
+    budget.text(rest.len());
     pieces.push(rest.to_string());
     pieces
 }
@@ -337,7 +343,15 @@ fn split_long_tokens(tokens: Vec<String>) -> Vec<String> {
     if tokens.iter().all(|token| token.len() <= MAX_TOKEN_LENGTH) {
         return tokens;
     }
-    tokens.into_iter().flat_map(split_long_token).collect()
+    let mut budget = crate::budget::Output::default();
+    let mut pieces = Vec::new();
+    for token in tokens {
+        for piece in split_long_token(token) {
+            budget.text(piece.len());
+            pieces.push(piece);
+        }
+    }
+    pieces
 }
 
 #[pgrx::pg_extern(volatile, parallel_safe)]

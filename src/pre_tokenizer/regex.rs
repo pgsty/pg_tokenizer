@@ -29,6 +29,7 @@ impl RegexPreTokenizer {
 
 impl PreTokenizer for RegexPreTokenizer {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
-        self.pattern.find_iter(text).map(|m| m.as_str()).collect()
+        crate::budget::piece(text.len());
+        crate::budget::borrowed(self.pattern.find_iter(text).map(|m| m.as_str()))
     }
 }

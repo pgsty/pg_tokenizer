@@ -53,6 +53,17 @@
 
 > We utilize `TOML` syntax to express all configurations. Configurations that cannot be parsed or validated, including invalid regular expressions, raise SQLSTATE `22023` (`invalid_parameter_value`) with the parser's message as DETAIL.
 
+### Analysis resource budgets (1.0.1)
+
+These positive session settings reject oversized input or expansion with SQLSTATE `54000`; results are never silently truncated. See [cancellation and resource use](07-limitation.md#cancellation-and-resource-use) for the accounting model and remaining third-party library limits.
+
+| Setting | Default | Scope |
+| --- | ---: | --- |
+| `pg_tokenizer.max_input_bytes` | 16,777,216 | UTF-8 bytes in one analyzer input |
+| `pg_tokenizer.max_output_tokens` | 1,000,000 | Tokens or model IDs in one stage |
+| `pg_tokenizer.max_output_bytes` | 67,108,864 | Token bytes plus descriptors, ID bytes, character output or ngram offsets |
+| `pg_tokenizer.max_piece_bytes` | 1,048,576 | Input to one regex or opaque library/dictionary call |
+
 ### Options for `text analyzer`
 
 | Key               | Type           | Description                                                                            |

@@ -101,7 +101,7 @@ impl TokenizerModel for HuggingFaceModel {
 
 pub type HuggingFaceConfig = String;
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn create_huggingface_model(name: &str, config: &str) {
     validate_new_model_name(name).unwrap();
 
@@ -128,7 +128,7 @@ fn create_huggingface_model(name: &str, config: &str) {
 
     pgrx::Spi::connect_mut(|client| {
         let tuptable = client
-            .update(insert_model, Some(1), &[name.into(), config_str.into()])
+            .update(insert_model, None, &[name.into(), config_str.into()])
             .unwrap();
 
         if tuptable.is_empty() {
@@ -145,7 +145,7 @@ fn create_huggingface_model(name: &str, config: &str) {
     });
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
+#[pgrx::pg_extern(volatile, parallel_unsafe)]
 fn drop_huggingface_model(name: &str) {
     validate_new_model_name(name).unwrap();
 
@@ -154,9 +154,7 @@ fn drop_huggingface_model(name: &str) {
     "#;
 
     pgrx::Spi::connect_mut(|client| {
-        let tuptable = client
-            .update(delete_model, Some(1), &[name.into()])
-            .unwrap();
+        let tuptable = client.update(delete_model, None, &[name.into()]).unwrap();
 
         if tuptable.is_empty() {
             pgrx::warning!("Model not found: {}", name);
@@ -231,7 +229,8 @@ mod tests {
     #[test]
     fn batches_check_for_interrupts_per_token() {
         use super::HuggingFaceModel;
-        use crate::{model::TokenizerModel, utils::interrupt_tests::count_interrupt_checks};
+        use crate::model::TokenizerModel;
+        use crate::utils::interrupt_tests::count_interrupt_checks;
         let model = HuggingFaceModel {
             tokenizer: tokenizer(json!({"[UNK]": 0, "a": 1}), Value::Null, json!([])),
         };

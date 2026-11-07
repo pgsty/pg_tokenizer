@@ -6,7 +6,8 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::{collections::HashMap, fmt::Write};
+use std::collections::HashMap;
+use std::fmt::Write;
 
 // PostgreSQL rejects tsvector lexemes of 2 KB (MAXSTRLEN) or longer.
 const MAX_LEXEME_BYTES: usize = 2046;

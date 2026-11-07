@@ -12,6 +12,17 @@
 statement ok
 BEGIN;
 
+# This regression intentionally exceeds the normal document budget to test
+# cancellation within a long-running, otherwise admitted operation.
+statement ok
+SET LOCAL pg_tokenizer.max_input_bytes = 32000000;
+
+statement ok
+SET LOCAL pg_tokenizer.max_output_tokens = 3000000;
+
+statement ok
+SET LOCAL pg_tokenizer.max_output_bytes = 256000000;
+
 statement ok
 SELECT tokenizer_catalog.create_text_analyzer('interrupt_words', 'pre_tokenizer = "unicode_segmentation"');
 

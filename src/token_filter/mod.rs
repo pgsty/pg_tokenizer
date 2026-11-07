@@ -27,10 +27,15 @@ pub trait TokenFilter {
     fn apply(&self, token: String) -> Vec<String>;
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
+        let mut budget = crate::budget::Output::default();
         let mut results = Vec::with_capacity(tokens.len());
         for token in tokens {
             check_for_interrupts();
-            results.extend(self.apply(token));
+            let output = self.apply(token);
+            for token in &output {
+                budget.text(token.len());
+            }
+            results.extend(output);
         }
         results
     }
@@ -48,6 +53,14 @@ pub enum TokenFilterConfig {
     Synonym(String),
     #[serde(rename = "ngram")]
     NGram(NgramConfig),
+}
+
+pub(crate) fn qualify_dictionaries(filters: &mut [TokenFilterConfig]) {
+    for filter in filters {
+        if let TokenFilterConfig::PgDict(name) = filter {
+            *name = pg_dict::qualify(name);
+        }
+    }
 }
 
 pub fn get_token_filter(config: TokenFilterConfig) -> TokenFilterPtr {
@@ -75,7 +88,8 @@ pub(crate) fn clear_caches() {
 
 #[cfg(test)]
 mod tests {
-    use super::{skip_non_alphanumeric::SkipNonAlphanumeric, TokenFilter};
+    use super::skip_non_alphanumeric::SkipNonAlphanumeric;
+    use super::TokenFilter;
     use crate::utils::interrupt_tests::count_interrupt_checks;
 
     #[test]
