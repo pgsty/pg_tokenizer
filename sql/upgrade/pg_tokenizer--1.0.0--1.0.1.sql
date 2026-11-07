@@ -14,8 +14,9 @@ ALTER FUNCTION tokenizer_catalog.drop_text_analyzer(text) PARALLEL UNSAFE;
 ALTER FUNCTION tokenizer_catalog.create_tokenizer(text, text) PARALLEL UNSAFE;
 ALTER FUNCTION tokenizer_catalog.drop_tokenizer(text) PARALLEL UNSAFE;
 
--- Old definitions did not record the creator's search_path. Preserve standard
--- builtin names, resolve a unique custom dictionary, and refuse ambiguity.
+-- Old definitions did not record the creator's search_path. Resolve exactly
+-- one dictionary and refuse ambiguity, including a custom dictionary that
+-- shadows a pg_catalog builtin: the original search_path cannot be recovered.
 DO $dictionaries$
 DECLARE
     definition record;
@@ -41,7 +42,7 @@ BEGIN
               INTO candidates FROM pg_catalog.pg_ts_dict d
               JOIN pg_catalog.pg_namespace n ON n.oid = d.dictnamespace
               WHERE d.dictname = identifiers[1];
-            IF pg_catalog.cardinality(candidates) = 1 OR candidates[1] LIKE 'pg_catalog.%' THEN
+            IF pg_catalog.cardinality(candidates) = 1 THEN
                 qualified := candidates[1];
             ELSE
                 RAISE EXCEPTION 'pg_dict name % in % % is missing or ambiguous',

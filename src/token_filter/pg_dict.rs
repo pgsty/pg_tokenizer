@@ -47,8 +47,10 @@ impl PgDictTokenFilter {
             )
         }
         .expect("parse_ident returned NULL");
-        // Before 1.0.1 names were stored unqualified. Builtins retain their
-        // standard meaning; custom names must identify a unique schema.
+        // Before 1.0.1 names were stored unqualified. Keep a legacy name only
+        // when it identifies exactly one dictionary; a custom dictionary that
+        // shadows a pg_catalog builtin is ambiguous because the old creator's
+        // search_path cannot be recovered.
         let name = if parts.len() == 1 {
             let names: Vec<String> = crate::utils::spi_get_one(
                 "SELECT COALESCE(pg_catalog.array_agg(pg_catalog.format('%I.%I', n.nspname, d.dictname) \
@@ -60,7 +62,6 @@ impl PgDictTokenFilter {
             .unwrap_or_default();
             match names.as_slice() {
                 [one] => one.clone(),
-                [first, ..] if first.starts_with("pg_catalog.") => first.clone(),
                 _ => crate::utils::raise_error(
                     pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
                     format!("legacy pg_dict name {name:?} does not identify one dictionary"),

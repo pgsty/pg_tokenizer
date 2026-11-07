@@ -1034,6 +1034,35 @@ class IntegrationTests(unittest.TestCase):
                         (json.dumps({'token_filters': [{'pg_dict': 'dictionary_a.words'}]}),))
         self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
 
+    def test_upgrade_from_100_rejects_shadowed_builtin_dictionary(self):
+        self.db.execute("CREATE SCHEMA dictionary_shadow")
+        self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_shadow.simple (TEMPLATE = simple, ACCEPT = false)")
+        model = {'model': {'type': 'WordLevel', 'vocab': {'[UNK]': 0, 'UPPER': 7, 'upper': 8}, 'unk_token': '[UNK]'}}
+        self.db.execute("SELECT create_huggingface_model('shadow_model', %s)", (json.dumps(model),))
+        analyzer = {'token_filters': [{'pg_dict': 'simple'}]}
+        tokenizer = dict(analyzer, model='shadow_model')
+        for table, config in [('text_analyzer', analyzer), ('tokenizer', tokenizer)]:
+            self.db.execute(sql.SQL("INSERT INTO tokenizer_catalog.{} VALUES ('shadowed_builtin', %s)").format(sql.Identifier(table)),
+                            (json.dumps(config),))
+        # Both lazy runtime loads must refuse to guess the old creator's path.
+        for function in ('apply_text_analyzer', 'tokenize'):
+            with self.subTest(function=function):
+                with self.assertRaisesRegex(psycopg.errors.InvalidParameterValue, 'does not identify one dictionary'):
+                    self.db.execute(sql.SQL("SELECT {}('UPPER', 'shadowed_builtin')").format(sql.Identifier(function)))
+        # Check each migration branch independently; the analyzer must not mask
+        # a missed ambiguity in an inline tokenizer definition.
+        for table, config in [('text_analyzer', analyzer), ('tokenizer', tokenizer)]:
+            with self.subTest(table=table):
+                with self.assertRaisesRegex(psycopg.errors.RaiseException, f'in {table} shadowed_builtin is missing or ambiguous'):
+                    self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+                self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'").fetchone()[0], '1.0.0')
+                config['token_filters'] = [{'pg_dict': 'dictionary_shadow.simple'}]
+                self.db.execute(sql.SQL("UPDATE tokenizer_catalog.{} SET config=%s WHERE name='shadowed_builtin'").format(sql.Identifier(table)),
+                                (json.dumps(config),))
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT apply_text_analyzer('UPPER', 'shadowed_builtin')").fetchone()[0], ['UPPER'])
+        self.assertEqual(self.db.execute("SELECT tokenize('UPPER', 'shadowed_builtin')").fetchone()[0], [7])
+
     def test_version_counter_permissions_and_direct_dml(self):
         self.db.execute("SELECT create_text_analyzer('versioned', '')")
         with self.connect() as reader, self.connect(user=self.owner) as owner:

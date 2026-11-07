@@ -37,6 +37,8 @@
 
 Version 1.0.1 adds WAL-replicated definition invalidation for standbys and promotion, schema-bound PostgreSQL dictionaries, correct writer parallel markings, and configurable analysis budgets. It preserves SQL signatures and vocabulary IDs.
 
+It also fixes Lindera server-file permission checks, UTF-8 splitting of long custom tokens, repeated-lexeme `tsvector` conversion, trigger target coercion, and Jieba's swapped `full`/`precise` modes. Regenerate persisted output and rebuild dependent indexes if either Jieba mode was used in 1.0.0 or earlier. Analysis budgets reduce expansion risk but do not impose a hard memory or cancellation-time limit on third-party libraries.
+
 Version 1.0.0 was the first PGSTY release. It builds with pgrx 0.19.3 for PostgreSQL 14–18 and moves to Lindera 6.2, Jieba 0.11, and Hugging Face tokenizers 0.23. It adds native PostgreSQL `tsvector` output, filtered custom vocabularies with schema-qualified source tables, safe concurrent vocabulary writes, database-owner privileges, transaction-aware definition caches, preload models that survive cache invalidation and broken entries, and definition tables included in `pg_dump`. It fixes `ngram` for non-ASCII and short tokens, calls `pg_dict` dictionaries the way `ts_lexize` does, reserves the built-in stopword lists, and takes its Snowball stemmers from [`pgsty/rust-stemmers`](https://github.com/pgsty/rust-stemmers) 1.2.1 with unchanged output. Existing `tokenize()` calls still return `INT[]`.
 
 See [custom models](docs/06-model.md#custom-model), [native full-text search](docs/04-usage.md#native-postgresql-full-text-search), and [upgrade instructions](docs/01-installation.md#upgrading-to-101).
