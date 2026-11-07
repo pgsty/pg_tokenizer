@@ -1,0 +1,23 @@
+{
+  "AGENTS.md": "fa93217d70428531879afe128da61479e0d0e995413e760b7ced4b8cd2922d43",
+  "NOTICE.md": "ae66a73c56b0a0298c713b24f1d4f9c68d2987d1d5e0350e348523ba8af2194f",
+  "README.md": "775cbe61b3575c6dd9316aab8f0e0233817dc00db472d77c8b527dcd5268c198",
+  "content/blog/release/vchord-1.2.0.md": "c5e6dac198d07b15931a11ef5109ffe13cbfb4ef8f372f5c661089568e2b3205",
+  "content/blog/release/vchord-1.2.0.zh.md": "2323a63f07e6386b1d8e40a15d59b9271dc66b35dafbea9f04825fa4234c565a",
+  "content/docs/about/_index.md": "ff92be81550cbc88ce4cb4d0b19d2273bbeb5837bc948b782a71a4aac8e738a2",
+  "content/docs/about/_index.zh.md": "f15470d6d721f10348aad7ee40b15eb57f74883e3ccfca6d3c9464d76137ac2e",
+  "content/docs/about/license.md": "c9fb45096a8d71541bf6353cc7d687a10978793933770068cefff46077d5f353",
+  "content/docs/about/license.zh.md": "5ba57146f7ee1afe8c463101974a21c0b42ce51a345d042b546952b4aaa84b8e",
+  "content/docs/vchord/usage/fallback-parameters.md": "82fa0438ad7b84fa08710474294ae2ceba873b45c0122219e0450a50498d9846",
+  "content/docs/vchord/usage/fallback-parameters.zh.md": "9898f8f8465c30da1633054096bd67a13a07c92ddd9eb7f920c2b9d516bb9f67",
+  "content/docs/vchord/usage/graph-index.md": "7b3a541bd89d58372b66aa0612fb3dcb1c445bc5d85cdb8bd3253c37fd12061d",
+  "content/docs/vchord/usage/graph-index.zh.md": "a79c4ea8c7c16a0e718f912364d187e79564d5b09b644d1975fc69aba117c09e",
+  "content/docs/vchord/usage/indexing.md": "c73bc446c7f514c08fe73052fdc532b6cad725f9b46c7f92021cabbc7b6a413f",
+  "content/docs/vchord/usage/indexing.zh.md": "eb867bac10c43009c6ffd27a7aae34b09cc773495ad58bd3643d705d519e6354",
+  "content/docs/vchord/usage/measure-recall.md": "6858e38d78a24a574206811959760fb7fa3dce513a114c9cc8ce05507b589cc9",
+  "content/docs/vchord/usage/measure-recall.zh.md": "8f907aae2d239d24e41d9d787f1001528d5b313f6df61978f1b71f77bcb3ed34",
+  "content/docs/vchord/usage/quantization-types.md": "c1e17c9672c47f9306871fb8074840d87e7c38400459bf50c2cf215c9ea4dc5f",
+  "content/docs/vchord/usage/quantization-types.zh.md": "841099a20b4aa058292866cdde1ac8fa5511b3e2909cb0cb67fa9715bd8b6d4c",
+  "go.mod": "4e585cd617dcfbde0b661d0b0b31b65c17f899e5b4020693ceecd36c5e4c35eb",
+  "go.sum": "7a0919a8ebc6b558c18bbf132ca8afd03855eedfe8eeb5d3123cc0b46a85156d"
+}

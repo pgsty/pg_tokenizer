@@ -1,0 +1,64 @@
+{
+  "source_commit": "19e2636a05c378f8928afdf8405998c425b13f72",
+  "source_status": "",
+  "checks": {
+    "initdb": {
+      "returncode": 0,
+      "seconds": 0.758
+    },
+    "start": {
+      "returncode": 0,
+      "seconds": 2.181
+    },
+    "integration": {
+      "returncode": 0,
+      "seconds": 12.74
+    },
+    "slt-setup": {
+      "returncode": 0,
+      "seconds": 0.088
+    },
+    "slt": {
+      "returncode": 0,
+      "seconds": 1.476
+    },
+    "stop": {
+      "returncode": 0,
+      "seconds": 0.151
+    },
+    "standby": {
+      "returncode": 0,
+      "seconds": 2.563
+    },
+    "preload": {
+      "returncode": 0,
+      "seconds": 1.187
+    },
+    "combo-orders": {
+      "returncode": 0,
+      "seconds": 15.081
+    }
+  },
+  "staged_controls": {
+    "vchord.control": "comment = 'vchord: Vector database plugin for Postgres, written in Rust, specifically designed for LLM'\ndefault_version = '1.2.0'\nmodule_pathname = '/private/tmp/pg-tokenizer-1.1.0-final-20261108/current/lib/vchord.dylib'\nrelocatable = true\nsuperuser = true\nrequires = 'vector'\n",
+    "pg_tokenizer.control": "comment = 'pg_tokenizer'\ndefault_version = '1.1.0'\nmodule_pathname = '/private/tmp/pg-tokenizer-1.1.0-final-20261108/current/lib/pg_tokenizer.dylib'\nrelocatable = false\nsuperuser = false\nschema = tokenizer_catalog\n",
+    "vchord_bm25.control": "comment = 'vchord_bm25: A postgresql extension for bm25 ranking algorithm'\ndefault_version = '1.0.0'\nmodule_pathname = '/private/tmp/pg-tokenizer-1.1.0-final-20261108/current/lib/vchord_bm25.dylib'\nrelocatable = true\nsuperuser = true\n"
+  },
+  "generated_sql_matches": "exact except independent catalog-table declaration order and terminal whitespace",
+  "sha256": {
+    "vchord_bm25.dylib": "44a4b29a5783a2b2b1cc89f68f9364a282d4a54f9618d49e2d28e01bda208765",
+    "pg_tokenizer.dylib": "1af8eecc7092bb5af5a88a686bf556a1e895152d409e8dc9467ca15f2255ee8e",
+    "vchord.dylib": "1294402dfe45899f3f462151557615f7eb2df64c21933553760c75c067a2030e"
+  },
+  "sql_sha256": {
+    "pg_tokenizer--1.0.0--1.1.0.sql": "c4d9d31499ba9c71b09455e4ff7c6667d6d121cd7b3a81e004aa7ad05d7bf801",
+    "pg_tokenizer--0.1.1.sql": "1cb5b7cb44527c35da2b49a44698f69a4b34c71d3ad1f7bc25674defc0ae1028",
+    "pg_tokenizer--0.1.0.sql": "4174968c5a5c549cab14d8c5c05f4a2b131d6eb511e905723cff973ba5aa40c2",
+    "pg_tokenizer--1.1.0.sql": "ff4b020ade2854e51d5c173f466ff1244e0b21509dbbf5586645fb519bd57e02",
+    "pg_tokenizer--0.1.0--0.1.1.sql": "d0caa14fbe24e8cd134830ea3ddd915d1a0f00aad14e1e697806478c88354a2b",
+    "pg_tokenizer.control": "dbf9b6306d6729f4e779a45a21d2713e0e089b9e81520475b5a942ae8ad4278d",
+    "pg_tokenizer--1.0.0.sql": "d66372df4d00f37f72b0a4424b571d0837fe9cbd166ec6a449f6fd9b4dc6c1c2",
+    "pg_tokenizer--0.1.1--1.0.0.sql": "b6f0944e8b0f7ae7b1338d18b7970590b6c5cd25bb28ae95608c2dfc38a684e0"
+  },
+  "clusters_stopped_and_removed": true
+}

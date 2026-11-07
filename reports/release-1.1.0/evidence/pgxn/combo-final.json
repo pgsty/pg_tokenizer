@@ -1,0 +1,57 @@
+{
+  "sha256": {
+    "vchord": "1294402dfe45899f3f462151557615f7eb2df64c21933553760c75c067a2030e",
+    "vchord_bm25": "44a4b29a5783a2b2b1cc89f68f9364a282d4a54f9618d49e2d28e01bda208765",
+    "pg_tokenizer": "14b31c1f775937b1587a2eec21203119f98a02937b25a40d75ea38c290118581"
+  },
+  "orders": [
+    {
+      "order": [
+        "vchord",
+        "vchord_bm25",
+        "pg_tokenizer"
+      ],
+      "result": "pass"
+    },
+    {
+      "order": [
+        "vchord",
+        "pg_tokenizer",
+        "vchord_bm25"
+      ],
+      "result": "pass"
+    },
+    {
+      "order": [
+        "vchord_bm25",
+        "vchord",
+        "pg_tokenizer"
+      ],
+      "result": "pass"
+    },
+    {
+      "order": [
+        "vchord_bm25",
+        "pg_tokenizer",
+        "vchord"
+      ],
+      "result": "pass"
+    },
+    {
+      "order": [
+        "pg_tokenizer",
+        "vchord",
+        "vchord_bm25"
+      ],
+      "result": "pass"
+    },
+    {
+      "order": [
+        "pg_tokenizer",
+        "vchord_bm25",
+        "vchord"
+      ],
+      "result": "pass"
+    }
+  ]
+}

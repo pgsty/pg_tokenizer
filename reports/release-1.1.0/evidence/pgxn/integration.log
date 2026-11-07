@@ -1,0 +1,54 @@
+test_analysis_budgets (__main__.IntegrationTests.test_analysis_budgets) ... ok
+test_analyzer_cached_plan_observes_redefinition (__main__.IntegrationTests.test_analyzer_cached_plan_observes_redefinition) ... ok
+test_builtin_stopwords_are_reserved (__main__.IntegrationTests.test_builtin_stopwords_are_reserved) ... ok
+test_cache_not_retained_from_older_snapshot (__main__.IntegrationTests.test_cache_not_retained_from_older_snapshot) ... ok
+test_catalog_cache_invalidation_across_backends_and_rollbacks (__main__.IntegrationTests.test_catalog_cache_invalidation_across_backends_and_rollbacks) ... ok
+test_catalog_writers_are_parallel_unsafe (__main__.IntegrationTests.test_catalog_writers_are_parallel_unsafe) ... ok
+test_concurrent_batches_and_rollback (__main__.IntegrationTests.test_concurrent_batches_and_rollback) ... ok
+test_concurrent_opposite_transactions (__main__.IntegrationTests.test_concurrent_opposite_transactions) ... ok
+test_concurrent_strong_isolation_requires_retry (__main__.IntegrationTests.test_concurrent_strong_isolation_requires_retry) ... ok
+test_database_owner_permissions (__main__.IntegrationTests.test_database_owner_permissions) ... ok
+test_direct_dml_abort_does_not_reuse_a_version (__main__.IntegrationTests.test_direct_dml_abort_does_not_reuse_a_version) ... ok
+test_drop_custom_model_after_source_table_drop (__main__.IntegrationTests.test_drop_custom_model_after_source_table_drop) ... ok
+test_drop_custom_model_name_handling (__main__.IntegrationTests.test_drop_custom_model_name_handling) ... ok
+test_filter_validation_on_empty_corpus (__main__.IntegrationTests.test_filter_validation_on_empty_corpus) ... ok
+test_huggingface_padding_budget (__main__.IntegrationTests.test_huggingface_padding_budget) ... ok
+test_identity_sequence_name_collision (__main__.IntegrationTests.test_identity_sequence_name_collision) ... ok
+test_lindera_file_dictionaries_require_privileges (__main__.IntegrationTests.test_lindera_file_dictionaries_require_privileges) ... ok
+test_logical_dump_restores_definitions (__main__.IntegrationTests.test_logical_dump_restores_definitions) ... ok
+test_lookups_survive_concurrent_invalidation (__main__.IntegrationTests.test_lookups_survive_concurrent_invalidation) ... ok
+test_native_vector_limits_and_cached_plans (__main__.IntegrationTests.test_native_vector_limits_and_cached_plans) ... ok
+test_native_vector_skips_overlong_lexemes (__main__.IntegrationTests.test_native_vector_skips_overlong_lexemes) ... ok
+test_ngram_counts_characters (__main__.IntegrationTests.test_ngram_counts_characters) ... ok
+test_owner_cannot_capture_trigger_calls_or_preload_list (__main__.IntegrationTests.test_owner_cannot_capture_trigger_calls_or_preload_list) ... ok
+test_parallel_query_after_invalidation (__main__.IntegrationTests.test_parallel_query_after_invalidation) ... ok
+test_pg_dict_matches_ts_lexize (__main__.IntegrationTests.test_pg_dict_matches_ts_lexize) ... ok
+test_pg_dict_pins_schema (__main__.IntegrationTests.test_pg_dict_pins_schema) ... ok
+test_pg_dict_refreshes_oid_after_ddl (__main__.IntegrationTests.test_pg_dict_refreshes_oid_after_ddl) ... ok
+test_prepare_read_only_cache_cleanup (__main__.IntegrationTests.test_prepare_read_only_cache_cleanup) ... ok
+test_prepare_transaction_with_definition_change_is_rejected (__main__.IntegrationTests.test_prepare_transaction_with_definition_change_is_rejected) ... ok
+test_qualified_table_with_literal_shadow (__main__.IntegrationTests.test_qualified_table_with_literal_shadow) ... ok
+test_read_committed_refreshes_after_long_statement (__main__.IntegrationTests.test_read_committed_refreshes_after_long_statement) ... ok
+test_upgrade_from_010 (__main__.IntegrationTests.test_upgrade_from_010) ... ok
+test_upgrade_from_100_moves_runtime_objects (__main__.IntegrationTests.test_upgrade_from_100_moves_runtime_objects) ... ok
+test_upgrade_from_100_pins_dictionary_names (__main__.IntegrationTests.test_upgrade_from_100_pins_dictionary_names) ... ok
+test_upgrade_from_100_rejects_ambiguous_dictionary (__main__.IntegrationTests.test_upgrade_from_100_rejects_ambiguous_dictionary) ... ok
+test_upgrade_from_100_rejects_shadowed_builtin_dictionary (__main__.IntegrationTests.test_upgrade_from_100_rejects_shadowed_builtin_dictionary) ... ok
+test_upgrade_from_100_retries_old_snapshot (__main__.IntegrationTests.test_upgrade_from_100_retries_old_snapshot) ... ok
+test_upgrade_from_100_retries_repeatable_creator (__main__.IntegrationTests.test_upgrade_from_100_retries_repeatable_creator) ... ok
+test_upgrade_from_100_retries_serializable_creator (__main__.IntegrationTests.test_upgrade_from_100_retries_serializable_creator) ... ok
+test_upgrade_from_100_rolls_back_partial_moves (__main__.IntegrationTests.test_upgrade_from_100_rolls_back_partial_moves) ... ok
+test_upgrade_from_100_runtime_schema_collision_rolls_back (__main__.IntegrationTests.test_upgrade_from_100_runtime_schema_collision_rolls_back) ... ok
+test_upgrade_from_100_serializes_custom_model_creation (__main__.IntegrationTests.test_upgrade_from_100_serializes_custom_model_creation) ... ok
+test_upgrade_from_100_waits_for_existing_creator (__main__.IntegrationTests.test_upgrade_from_100_waits_for_existing_creator) ... ok
+test_upgrade_hardens_privileges_and_volatility (__main__.IntegrationTests.test_upgrade_hardens_privileges_and_volatility) ... ok
+test_upgrade_preserves_vocabulary_and_function_dependencies (__main__.IntegrationTests.test_upgrade_preserves_vocabulary_and_function_dependencies) ... ok
+test_upgrade_refuses_immutable_dependents (__main__.IntegrationTests.test_upgrade_refuses_immutable_dependents) ... ok
+test_upgrade_warns_about_replaced_stopwords (__main__.IntegrationTests.test_upgrade_warns_about_replaced_stopwords) ... ok
+test_version_counter_permissions_and_direct_dml (__main__.IntegrationTests.test_version_counter_permissions_and_direct_dml) ... ok
+test_writers_without_new_tokens_do_not_wait (__main__.IntegrationTests.test_writers_without_new_tokens_do_not_wait) ... ok
+
+----------------------------------------------------------------------
+Ran 49 tests in 10.013s
+
+OK

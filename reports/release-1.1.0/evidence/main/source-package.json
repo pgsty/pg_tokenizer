@@ -1,0 +1,14 @@
+{
+  "commit": "19e2636a05c378f8928afdf8405998c425b13f72",
+  "version": "1.1.0",
+  "archive": "/Users/vonng/pgsty/pg_tokenizer/build/dist/pg_tokenizer-1.1.0.zip",
+  "sha256": "640a1dfd25da632525e508e5916b8971013acff11e539eca41c915355ed5ac44",
+  "file_count": 103,
+  "checks": [
+    "unique rooted entries",
+    "META/control 1.1.0",
+    "no 1.0.1 SQL or reports/AGENTS/.github",
+    "all upgrade aliases dereferenced"
+  ],
+  "same_ref_reproducible": true
+}

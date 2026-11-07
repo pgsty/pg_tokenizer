@@ -1,0 +1,21 @@
+INFO: unpacking: /Users/vonng/pgsty/pg_tokenizer/build/dist/pg_tokenizer-1.1.0.zip
+INFO: building extension
+python3 tools/pgxn.py build --pg-config "/opt/homebrew/bin/pg_config" --build-dir "/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build" --features "lindera-ipadic"
+[32m[1m       Using[0m[39m [37m[1mPgConfig("pg18")[0m[39m and `pg_config` from [36m/opt/homebrew/bin/pg_config[39m
+[32m[1m    Building[0m[39m extension with features [36mlindera-ipadic pg18[39m
+[32m[1m     Running[0m[39m command [36m"/Users/vonng/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo" "rustc" "--lib" "--manifest-path" "/private/var/folders/df/bfm8q07d7bv3kpjf1fjchq4m0000gn/T/tmpq6hzw10e/pg_tokenizer-1.1.0/Cargo.toml" "--release" "--features" "lindera-ipadic pg18" "--message-format=json-render-diagnostics" "--locked"[39m
+   Compiling pg_tokenizer v1.1.0 (/private/var/folders/df/bfm8q07d7bv3kpjf1fjchq4m0000gn/T/tmpq6hzw10e/pg_tokenizer-1.1.0)
+    Finished `release` profile [optimized] target(s) in 13.09s
+[32m[1m  Installing[0m[39m extension
+[32m[1m     Copying[0m[39m control file to [36m/private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61/opt/homebrew/share/postgresql@18/extension/pg_tokenizer.control[39m
+[32m[1m     Copying[0m[39m shared library to [36m/private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61/opt/homebrew/lib/postgresql@18/pg_tokenizer.dylib[39m
+[32m[1m  Discovered[0m[39m [36m[1m34[0m[39m SQL entities: [36m[1m0[0m[39m schemas ([36m[1m0[0m[39m unique), [36m[1m24[0m[39m functions, [36m[1m0[0m[39m types, [36m[1m0[0m[39m enums, [36m[1m9[0m[39m sqls, [36m[1m0[0m[39m ords, [36m[1m0[0m[39m hashes, [36m[1m0[0m[39m aggregates, [36m[1m1[0m[39m triggers
+[32m[1m     Writing[0m[39m SQL entities to /private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61/opt/homebrew/share/postgresql@18/extension/pg_tokenizer--1.1.0.sql
+[32m[1m     Copying[0m[39m extension schema upgrade file to [36m/private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61/opt/homebrew/share/postgresql@18/extension/pg_tokenizer--1.0.0--1.1.0.sql[39m
+[32m[1m     Copying[0m[39m extension schema upgrade file to [36m/private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61/opt/homebrew/share/postgresql@18/extension/pg_tokenizer--0.1.0--0.1.1.sql[39m
+[32m[1m     Copying[0m[39m extension schema upgrade file to [36m/private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61/opt/homebrew/share/postgresql@18/extension/pg_tokenizer--0.1.1--1.0.0.sql[39m
+[32m[1m    Finished[0m[39m installing pg_tokenizer
+Staged pg_tokenizer 1.1.0 for PostgreSQL 18.6 (Homebrew) in /private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build/package-jujd_l61
+INFO: installing extension
+python3 tools/pgxn.py install --pg-config "/opt/homebrew/bin/pg_config" --build-dir "/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-build" --destdir "/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-installed"
+Installed 6 files under /private/tmp/pg-tokenizer-1.1.0-final-20261108/pgxn-installed

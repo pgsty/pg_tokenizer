@@ -1,0 +1,30 @@
+{
+  "rustfmt": {
+    "returncode": 0,
+    "output": ""
+  },
+  "taplo": {
+    "returncode": 0,
+    "output": ""
+  },
+  "whitespace": {
+    "returncode": 0,
+    "output": ""
+  },
+  "python": {
+    "returncode": 0,
+    "output": ""
+  },
+  "workflow_yaml": {
+    "returncode": 0,
+    "output": ""
+  },
+  "clean_source": "19e2636a05c378f8928afdf8405998c425b13f72",
+  "historical_sql_unchanged": [
+    "sql/install/pg_tokenizer--0.1.0.sql",
+    "sql/install/pg_tokenizer--0.1.1.sql",
+    "sql/install/pg_tokenizer--1.0.0.sql",
+    "sql/upgrade/pg_tokenizer--0.1.0--0.1.1.sql",
+    "sql/upgrade/pg_tokenizer--0.1.1--1.0.0.sql"
+  ]
+}

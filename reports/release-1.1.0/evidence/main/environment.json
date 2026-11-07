@@ -1,0 +1,11 @@
+{
+  "rust": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "pgrx": "cargo-pgrx 0.19.3",
+  "postgresql": "PostgreSQL 18.6 (Homebrew)",
+  "platform": "Darwin arm64",
+  "python": "Python 3.14.8",
+  "pgxnclient": "pgxnclient 1.3.2",
+  "site_commit": "eb8a20fea6a8af645a418e08c26889925386c55a",
+  "pgxn_validator": "PGXN::Meta::Validator v0.16.0",
+  "source_commit": "19e2636a05c378f8928afdf8405998c425b13f72"
+}

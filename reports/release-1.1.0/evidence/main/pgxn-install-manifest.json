@@ -1,0 +1,17 @@
+{
+  "version": "1.1.0",
+  "paths": {
+    "version": "PostgreSQL 18.6 (Homebrew)",
+    "pkglibdir": "/opt/homebrew/lib/postgresql@18",
+    "sharedir": "/opt/homebrew/share/postgresql@18"
+  },
+  "package": "package-jujd_l61",
+  "files": {
+    "opt/homebrew/lib/postgresql@18/pg_tokenizer.dylib": "14b31c1f775937b1587a2eec21203119f98a02937b25a40d75ea38c290118581",
+    "opt/homebrew/share/postgresql@18/extension/pg_tokenizer--0.1.0--0.1.1.sql": "d0caa14fbe24e8cd134830ea3ddd915d1a0f00aad14e1e697806478c88354a2b",
+    "opt/homebrew/share/postgresql@18/extension/pg_tokenizer--0.1.1--1.0.0.sql": "b6f0944e8b0f7ae7b1338d18b7970590b6c5cd25bb28ae95608c2dfc38a684e0",
+    "opt/homebrew/share/postgresql@18/extension/pg_tokenizer--1.0.0--1.1.0.sql": "c4d9d31499ba9c71b09455e4ff7c6667d6d121cd7b3a81e004aa7ad05d7bf801",
+    "opt/homebrew/share/postgresql@18/extension/pg_tokenizer--1.1.0.sql": "1ae604c042f3aaf528a0acada0171617cfbef93e0ebf55247d1013dcfa876ecd",
+    "opt/homebrew/share/postgresql@18/extension/pg_tokenizer.control": "6398331886a50e04ef70924cdab70744b6cb1207d02afd4147fdc54cf5e191ca"
+  }
+}

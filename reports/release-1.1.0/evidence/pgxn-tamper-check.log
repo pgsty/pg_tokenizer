@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/vonng/pgsty/pg_tokenizer/tools/pgxn.py", line 169, in <module>
+    main()
+    ~~~~^^
+  File "/Users/vonng/pgsty/pg_tokenizer/tools/pgxn.py", line 165, in main
+    {"build": build, "install": install, "dist": dist}[args.command](args)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/Users/vonng/pgsty/pg_tokenizer/tools/pgxn.py", line 88, in install
+    raise ValueError(f"Staged file changed: {name}")
+ValueError: Staged file changed: opt/homebrew/share/postgresql@18/extension/pg_tokenizer.control
