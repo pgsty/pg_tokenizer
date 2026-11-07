@@ -23,7 +23,7 @@ SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger(
     source_column => 'body', target_column => 'embedding', filter => $$tenant = 'O''Reilly'$$);
 
 query T
-SELECT array_agg(token ORDER BY id) FROM tokenizer_catalog.model_filtered;
+SELECT array_agg(token ORDER BY id) FROM tokenizer_data.model_filtered;
 ----
 {alpha,zebra}
 
@@ -48,7 +48,7 @@ statement ok
 UPDATE filter_corpus.documents SET tenant = 'other', body = 'outside' WHERE id = 2;
 
 query I
-SELECT count(*) FROM tokenizer_catalog.model_filtered WHERE token IN ('outside', 'excluded');
+SELECT count(*) FROM tokenizer_data.model_filtered WHERE token IN ('outside', 'excluded');
 ----
 0
 
@@ -74,7 +74,7 @@ filter = "tenant = 'other'"
 $$);
 
 query T
-SELECT array_agg(token ORDER BY token) FROM tokenizer_catalog.model_direct_filter;
+SELECT array_agg(token ORDER BY token) FROM tokenizer_data.model_direct_filter;
 ----
 {outside}
 
@@ -82,7 +82,7 @@ statement ok
 INSERT INTO filter_corpus.documents (id, tenant, body) VALUES (4, 'other', 'newword'), (5, NULL, 'never');
 
 query T
-SELECT array_agg(token ORDER BY token) FROM tokenizer_catalog.model_direct_filter;
+SELECT array_agg(token ORDER BY token) FROM tokenizer_data.model_direct_filter;
 ----
 {newword,outside}
 

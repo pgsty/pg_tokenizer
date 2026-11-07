@@ -7,33 +7,6 @@ The ordering of items is not stable, it is driven by a dependency graph.
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/token_filter/synonym.rs:62
-
-CREATE TABLE tokenizer_catalog.synonym (
-    name TEXT NOT NULL UNIQUE PRIMARY KEY,
-    config TEXT NOT NULL
-);
-/* </end connected objects> */
-
-/* <begin connected objects> */
--- src/tokenizer.rs:89
-
-CREATE TABLE tokenizer_catalog.tokenizer (
-    name TEXT NOT NULL UNIQUE PRIMARY KEY,
-    config TEXT NOT NULL
-);
-/* </end connected objects> */
-
-/* <begin connected objects> */
--- src/token_filter/stopwords.rs:49
-
-CREATE TABLE tokenizer_catalog.stopwords (
-    name TEXT NOT NULL UNIQUE PRIMARY KEY,
-    config TEXT NOT NULL
-);
-/* </end connected objects> */
-
-/* <begin connected objects> */
 -- src/text_analyzer.rs:96
 
 CREATE TABLE tokenizer_catalog.text_analyzer (
@@ -43,16 +16,7 @@ CREATE TABLE tokenizer_catalog.text_analyzer (
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/mod.rs:87
-
-CREATE TABLE tokenizer_catalog.model (
-    name TEXT NOT NULL UNIQUE PRIMARY KEY,
-    config TEXT NOT NULL
-);
-/* </end connected objects> */
-
-/* <begin connected objects> */
--- src/model/custom.rs:369
+-- src/model/custom.rs:395
 CREATE FUNCTION custom_model_insert_trigger()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -77,7 +41,7 @@ BEGIN
     FROM pg_catalog.unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model(
         $1.%I::pg_catalog.text, %L::pg_catalog.text)) AS t(token)
     WHERE NOT EXISTS (
-        SELECT 1 FROM tokenizer_catalog.%I AS vocabulary WHERE vocabulary.token = t.token
+        SELECT 1 FROM tokenizer_data.%I AS vocabulary WHERE vocabulary.token = t.token
     )', target_column, text_analyzer, model_table) INTO missing USING NEW;
     IF missing IS NULL THEN
         RETURN NEW;
@@ -87,12 +51,12 @@ BEGIN
     -- Serialize vocabulary inserts for this model until commit; only writers
     -- that add tokens take this lock.
     PERFORM pg_catalog.pg_advisory_xact_lock(
-        1885828203, pg_catalog.to_regclass(pg_catalog.format('tokenizer_catalog.%I', model_table))::oid::int);
+        1885828203, pg_catalog.to_regclass(pg_catalog.format('tokenizer_data.%I', model_table))::oid::int);
     EXECUTE pg_catalog.format('
-    INSERT INTO tokenizer_catalog.%I (token)
+    INSERT INTO tokenizer_data.%I (token)
     SELECT t.token FROM pg_catalog.unnest($1) AS t(token)
     WHERE NOT EXISTS (
-        SELECT 1 FROM tokenizer_catalog.%I AS vocabulary WHERE vocabulary.token = t.token
+        SELECT 1 FROM tokenizer_data.%I AS vocabulary WHERE vocabulary.token = t.token
     )
     ORDER BY t.token COLLATE "C"
     ON CONFLICT (token) DO NOTHING', model_table, model_table) USING missing;
@@ -111,6 +75,42 @@ BEGIN
         NULL::pg_catalog.text);
 END;
 $body$ LANGUAGE plpgsql;
+/* </end connected objects> */
+
+/* <begin connected objects> */
+-- src/token_filter/stopwords.rs:49
+
+CREATE TABLE tokenizer_catalog.stopwords (
+    name TEXT NOT NULL UNIQUE PRIMARY KEY,
+    config TEXT NOT NULL
+);
+/* </end connected objects> */
+
+/* <begin connected objects> */
+-- src/token_filter/synonym.rs:62
+
+CREATE TABLE tokenizer_catalog.synonym (
+    name TEXT NOT NULL UNIQUE PRIMARY KEY,
+    config TEXT NOT NULL
+);
+/* </end connected objects> */
+
+/* <begin connected objects> */
+-- src/tokenizer.rs:89
+
+CREATE TABLE tokenizer_catalog.tokenizer (
+    name TEXT NOT NULL UNIQUE PRIMARY KEY,
+    config TEXT NOT NULL
+);
+/* </end connected objects> */
+
+/* <begin connected objects> */
+-- src/model/mod.rs:87
+
+CREATE TABLE tokenizer_catalog.model (
+    name TEXT NOT NULL UNIQUE PRIMARY KEY,
+    config TEXT NOT NULL
+);
 /* </end connected objects> */
 
 /* <begin connected objects> */
@@ -179,7 +179,7 @@ AS 'MODULE_PATHNAME', 'apply_text_analyzer_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:357
+-- src/model/custom.rs:383
 -- pg_tokenizer::model::custom::apply_text_analyzer_for_custom_model
 CREATE  FUNCTION "apply_text_analyzer_for_custom_model"(
 	"text" TEXT, /* & str */
@@ -191,7 +191,7 @@ AS 'MODULE_PATHNAME', 'apply_text_analyzer_for_custom_model_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:151
+-- src/model/custom.rs:175
 -- pg_tokenizer::model::custom::create_custom_model
 CREATE  FUNCTION "create_custom_model"(
 	"name" TEXT, /* & str */
@@ -203,7 +203,7 @@ AS 'MODULE_PATHNAME', 'create_custom_model_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:371
+-- src/model/custom.rs:397
 -- pg_tokenizer::model::custom::create_custom_model_tokenizer_and_trigger
 CREATE  FUNCTION "create_custom_model_tokenizer_and_trigger"(
 	"tokenizer_name" TEXT, /* & str */
@@ -292,7 +292,7 @@ AS 'MODULE_PATHNAME', 'create_tokenizer_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:263
+-- src/model/custom.rs:288
 -- pg_tokenizer::model::custom::drop_custom_model
 CREATE  FUNCTION "drop_custom_model"(
 	"name" TEXT /* & str */
@@ -420,7 +420,7 @@ AS $$ SELECT tokenizer_catalog._tokens_to_tsvector_text(
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:427
+-- src/model/custom.rs:453
 -- pg_tokenizer::model::custom::custom_model_tokenizer_set_target_column_trigger
 CREATE FUNCTION "custom_model_tokenizer_set_target_column_trigger"()
 	RETURNS TRIGGER
@@ -433,7 +433,15 @@ CREATE FUNCTION "custom_model_tokenizer_set_target_column_trigger"()
 -- finalize
 -- The current database owner can manage local tokenizer definitions even when
 -- a different administrator installed the extension. No PUBLIC write access.
-GRANT USAGE, CREATE ON SCHEMA tokenizer_catalog TO pg_database_owner;
+CREATE SCHEMA tokenizer_data;
+REVOKE CREATE ON SCHEMA tokenizer_catalog FROM PUBLIC, pg_database_owner;
+GRANT USAGE ON SCHEMA tokenizer_catalog TO pg_database_owner;
+REVOKE ALL ON SCHEMA tokenizer_data FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA tokenizer_data TO pg_database_owner;
+ALTER DEFAULT PRIVILEGES IN SCHEMA tokenizer_data
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pg_database_owner;
+ALTER DEFAULT PRIVILEGES IN SCHEMA tokenizer_data
+    GRANT USAGE, SELECT ON SEQUENCES TO pg_database_owner;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tokenizer_catalog TO pg_database_owner;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA tokenizer_catalog TO pg_database_owner;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA tokenizer_catalog TO pg_database_owner;

@@ -87,8 +87,13 @@ class StandbyTests(unittest.TestCase):
                 ctl(primary, "start")
                 running.append(primary)
                 with connect(0) as writer:
-                    writer.execute("CREATE EXTENSION pg_tokenizer")
+                    writer.execute("CREATE EXTENSION pg_tokenizer VERSION '1.0.0'")
                     writer.execute("SELECT tokenizer_catalog.create_text_analyzer('replayed', '')")
+                    writer.execute("SELECT tokenizer_catalog.create_text_analyzer('vocab_analyzer', '')")
+                    writer.execute("CREATE TABLE public.replayed_corpus (body text, embedding int[])")
+                    writer.execute("SELECT tokenizer_catalog.create_custom_model_tokenizer_and_trigger('replayed_custom', 'replayed_custom', 'vocab_analyzer', 'public.replayed_corpus', 'body', 'embedding')")
+                    writer.execute("INSERT INTO public.replayed_corpus(body) VALUES ('alpha')")
+                    vocabulary_oid = writer.execute("SELECT 'tokenizer_catalog.model_replayed_custom'::regclass::oid").fetchone()[0]
                     model(writer, 11)
                     for name in ('model_reader', 'replaced_tokenizer'):
                         writer.execute("SELECT tokenizer_catalog.create_tokenizer(%s, 'model = \"replayed_model\"')", (name,))
@@ -107,6 +112,15 @@ class StandbyTests(unittest.TestCase):
                         initial = ([11], [11], ['alpha'], ['first'])
                         changed = ([22], [7592], ['beta'], ['second'])
                         self.assertEqual(dependencies(reader), initial)
+                        self.assertEqual(reader.execute("SELECT tokenizer_catalog.tokenize('alpha', 'replayed_custom')").fetchone()[0], [1])
+                        # Replay the schema migration in a session that has
+                        # already loaded the old custom-model configuration.
+                        writer.execute("ALTER EXTENSION pg_tokenizer UPDATE")
+                        upgrade_lsn = writer.execute("SELECT pg_current_wal_lsn()").fetchone()[0]
+                        wait_for(lambda: monitor.execute("SELECT pg_last_wal_replay_lsn() >= %s::pg_lsn", (upgrade_lsn,)).fetchone()[0])
+                        self.assertEqual(reader.execute("SELECT 'tokenizer_data.model_replayed_custom'::regclass::oid").fetchone()[0], vocabulary_oid)
+                        self.assertIsNone(reader.execute("SELECT to_regclass('tokenizer_catalog.model_replayed_custom')").fetchone()[0])
+                        self.assertEqual(reader.execute("SELECT tokenizer_catalog.tokenize('alpha', 'replayed_custom')").fetchone()[0], [1])
                         old.execute("BEGIN ISOLATION LEVEL REPEATABLE READ")
                         old.execute("SELECT count(*) FROM tokenizer_catalog.text_analyzer")
                         monitor.execute("SELECT pg_wal_replay_pause()")
@@ -153,6 +167,8 @@ class StandbyTests(unittest.TestCase):
                         self.assertEqual(analyze(old), ["UPPER"])
                         redefine(monitor, True)
                         self.assertEqual(analyze(reader), ["upper"])
+                        monitor.execute("INSERT INTO public.replayed_corpus(body) VALUES ('beta')")
+                        self.assertEqual(reader.execute("SELECT embedding = tokenizer_catalog.tokenize(body, 'replayed_custom') FROM public.replayed_corpus ORDER BY body").fetchall(), [(True,), (True,)])
 
                     # Crash recovery must retain the WAL-backed signal and definitions.
                     ctl(standby, "stop", "-m", "immediate")
@@ -161,6 +177,7 @@ class StandbyTests(unittest.TestCase):
                     running.append(standby)
                     with connect(1) as recovered:
                         self.assertEqual(analyze(recovered), ["upper"])
+                        self.assertEqual(recovered.execute("SELECT embedding = tokenizer_catalog.tokenize(body, 'replayed_custom') FROM public.replayed_corpus ORDER BY body").fetchall(), [(True,), (True,)])
             finally:
                 for data in reversed(running):
                     ctl(data, "stop", "-m", "fast")

@@ -1,6 +1,14 @@
 -- The current database owner can manage local tokenizer definitions even when
 -- a different administrator installed the extension. No PUBLIC write access.
-GRANT USAGE, CREATE ON SCHEMA tokenizer_catalog TO pg_database_owner;
+CREATE SCHEMA tokenizer_data;
+REVOKE CREATE ON SCHEMA tokenizer_catalog FROM PUBLIC, pg_database_owner;
+GRANT USAGE ON SCHEMA tokenizer_catalog TO pg_database_owner;
+REVOKE ALL ON SCHEMA tokenizer_data FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA tokenizer_data TO pg_database_owner;
+ALTER DEFAULT PRIVILEGES IN SCHEMA tokenizer_data
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO pg_database_owner;
+ALTER DEFAULT PRIVILEGES IN SCHEMA tokenizer_data
+    GRANT USAGE, SELECT ON SEQUENCES TO pg_database_owner;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA tokenizer_catalog TO pg_database_owner;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA tokenizer_catalog TO pg_database_owner;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA tokenizer_catalog TO pg_database_owner;

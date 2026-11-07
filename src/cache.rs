@@ -97,7 +97,24 @@ fn check_catalog_version() -> bool {
         "SELECT version FROM tokenizer_catalog.definition_version WHERE singleton",
         &[],
     )
-    .unwrap_or_else(|| pgrx::error!("pg_tokenizer definition version is missing"));
+    .unwrap_or_else(|| {
+        // Syscache can see an upgrade committed after the caller's snapshot.
+        // Do not silently replace that snapshot: version and definitions must
+        // remain consistent, including inside REPEATABLE READ transactions.
+        let visible = crate::utils::catalog_one::<bool>(
+            "SELECT EXISTS (SELECT FROM pg_catalog.pg_class WHERE oid = $1)",
+            &[relation.into()],
+        );
+        if visible == Some(false) {
+            crate::utils::raise_error(
+                pg_sys::errcodes::PgSqlErrorCode::ERRCODE_T_R_SERIALIZATION_FAILURE,
+                "pg_tokenizer was upgraded after the current snapshot",
+                None,
+                Some("Retry the transaction with a new snapshot."),
+            );
+        }
+        pgrx::error!("pg_tokenizer definition version is missing")
+    });
     let identity = (relation, version);
     let changed = CATALOG_VERSION.with(|cached| cached.replace(Some(identity)) != Some(identity));
     if changed {

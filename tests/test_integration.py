@@ -73,7 +73,7 @@ class IntegrationTests(unittest.TestCase):
 
     def connect(self, **kwargs):
         conn = psycopg.connect(self.dsn, dbname=self.dbname, autocommit=True, **kwargs)
-        conn.execute("SET search_path = public, tokenizer_catalog")
+        conn.execute("SET search_path = public, tokenizer_catalog, tokenizer_data")
         conn.execute("SET statement_timeout = '15s'")
         return conn
 
@@ -283,6 +283,8 @@ class IntegrationTests(unittest.TestCase):
             owner.execute(
                 "INSERT INTO tokenizer_catalog.future_table(token) VALUES ('defaults') RETURNING id"
             ).fetchone()
+            self.assertFalse(owner.execute("SELECT has_schema_privilege(current_user, 'tokenizer_catalog', 'CREATE')").fetchone()[0])
+            self.assertTrue(owner.execute("SELECT has_schema_privilege(current_user, 'tokenizer_data', 'USAGE,CREATE')").fetchone()[0])
             self.make_model(owner)
             owner.execute("SELECT create_stopwords('custom_stopwords', 'the')")
             owner.execute("SELECT create_synonym('custom_synonyms', 'pg postgres')")
@@ -315,14 +317,14 @@ class IntegrationTests(unittest.TestCase):
         # An existing relation forces PostgreSQL to choose a suffixed sequence.
         # Remove installer defaults so this checks the explicit model grants.
         self.db.execute(
-            "ALTER DEFAULT PRIVILEGES IN SCHEMA tokenizer_catalog REVOKE USAGE, SELECT ON SEQUENCES FROM pg_database_owner"
+            "ALTER DEFAULT PRIVILEGES IN SCHEMA tokenizer_data REVOKE USAGE, SELECT ON SEQUENCES FROM pg_database_owner"
         )
-        self.db.execute("CREATE TABLE tokenizer_catalog.model_race_id_seq(dummy int)")
+        self.db.execute("CREATE TABLE tokenizer_data.model_race_id_seq(dummy int)")
         self.make_model(self.db)
         sequence = self.db.execute(
             "SELECT pg_get_serial_sequence('model_race', 'id')"
         ).fetchone()[0]
-        self.assertNotEqual(sequence, "tokenizer_catalog.model_race_id_seq")
+        self.assertNotEqual(sequence, "tokenizer_data.model_race_id_seq")
         with self.connect(user=self.owner) as owner:
             self.assertTrue(
                 owner.execute(
@@ -526,7 +528,7 @@ class IntegrationTests(unittest.TestCase):
                 )
         self.assertIsNone(
             self.db.execute(
-                "SELECT to_regclass('tokenizer_catalog.model_invalid_filter')"
+                "SELECT to_regclass('tokenizer_data.model_invalid_filter')"
             ).fetchone()[0]
         )
 
@@ -609,12 +611,12 @@ class IntegrationTests(unittest.TestCase):
             )
             self.assertTrue(
                 owner.execute(
-                    "SELECT has_table_privilege(current_user, 'tokenizer_catalog.model_race', 'INSERT')"
+                    "SELECT has_table_privilege(current_user, 'tokenizer_data.model_race', 'INSERT')"
                 ).fetchone()[0]
             )
             self.assertTrue(
                 owner.execute(
-                    "SELECT has_sequence_privilege(current_user, 'tokenizer_catalog.model_race_id_seq', 'USAGE')"
+                    "SELECT has_sequence_privilege(current_user, 'tokenizer_data.model_race_id_seq', 'USAGE')"
                 ).fetchone()[0]
             )
             self.make_model(owner, "after_upgrade")
@@ -651,7 +653,7 @@ class IntegrationTests(unittest.TestCase):
         )
         try:
             with psycopg.connect(self.dsn, dbname=fresh_name, autocommit=True) as fresh:
-                fresh.execute("SET search_path = public, tokenizer_catalog")
+                fresh.execute("SET search_path = public, tokenizer_catalog, tokenizer_data")
                 fresh.execute("CREATE EXTENSION pg_tokenizer")
                 self.assertEqual(
                     self.db.execute(catalog_sql).fetchall(),
@@ -752,7 +754,7 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("DROP TABLE dropped_source")
         self.db.execute("SELECT drop_custom_model('dropped_source')")
         self.assertIsNone(
-            self.db.execute("SELECT to_regclass('tokenizer_catalog.model_dropped_source')").fetchone()[0]
+            self.db.execute("SELECT to_regclass('tokenizer_data.model_dropped_source')").fetchone()[0]
         )
         # Older versions stored literal (not SQL-quoted) table names.
         self.db.execute('CREATE TABLE "O\'Reilly docs" (body text)')
@@ -768,7 +770,7 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute('DROP TABLE "O\'Reilly docs"')
         self.db.execute("SELECT drop_custom_model('legacy_source')")
         self.assertIsNone(self.db.execute(
-            "SELECT to_regclass('tokenizer_catalog.model_legacy_source')"
+            "SELECT to_regclass('tokenizer_data.model_legacy_source')"
         ).fetchone()[0])
 
     def test_writers_without_new_tokens_do_not_wait(self):
@@ -793,7 +795,10 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("CREATE TABLE typed_docs (body varchar, embedding int[])")
         self.db.execute("SELECT create_text_analyzer('typed_docs', 'pre_tokenizer = \"unicode_segmentation\"')")
         with self.connect(user=self.owner) as owner:
-            owner.execute("""CREATE FUNCTION tokenizer_catalog.apply_text_analyzer_for_custom_model(v varchar, a text)
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                owner.execute("""CREATE FUNCTION tokenizer_catalog.apply_text_analyzer_for_custom_model(v varchar, a text)
+                    RETURNS text[] LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'captured'; END $$""")
+            owner.execute("""CREATE FUNCTION public.apply_text_analyzer_for_custom_model(v varchar, a text)
                 RETURNS text[] LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'captured'; END $$""")
             for function in ("add_preload_model(text)", "remove_preload_model(text)"):
                 self.assertFalse(
@@ -808,7 +813,7 @@ class IntegrationTests(unittest.TestCase):
         )
         self.db.execute("INSERT INTO typed_docs(body) VALUES ('hello world')")
         self.assertEqual(
-            self.db.execute("SELECT count(*) FROM tokenizer_catalog.model_typed_docs").fetchone()[0],
+            self.db.execute("SELECT count(*) FROM tokenizer_data.model_typed_docs").fetchone()[0],
             2,
         )
 
@@ -1009,6 +1014,142 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
             self.db.execute("SELECT tokenize('hello', 'pad_budget')")
 
+    def test_upgrade_from_100_moves_runtime_objects(self):
+        with self.connect(user=self.owner) as owner:
+            self.make_model(owner, 'owned')
+            owner.execute("INSERT INTO owned(body) VALUES ('alpha beta')")
+            owner.execute(sql.SQL("GRANT SELECT ON tokenizer_catalog.model_owned TO {}").format(sql.Identifier(self.outsider)))
+        self.db.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA tokenizer_catalog TO {} WITH GRANT OPTION").format(sql.Identifier(self.outsider)))
+        self.db.execute("CREATE VIEW vocabulary_view AS SELECT id, token FROM tokenizer_catalog.model_owned")
+        before = self.db.execute("SELECT 'tokenizer_catalog.model_owned'::regclass::oid, pg_get_serial_sequence('tokenizer_catalog.model_owned','id')::regclass::oid").fetchone()
+        identity = self.db.execute("SELECT oid, relowner, relacl FROM pg_class WHERE oid = ANY(%s) ORDER BY oid", (list(before),)).fetchall()
+        vocabulary = self.db.execute("SELECT * FROM vocabulary_view ORDER BY id").fetchall()
+        with self.connect(user=self.owner) as reader:
+            tokens = reader.execute("SELECT tokenize('alpha beta','owned')").fetchone()[0]
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            self.assertEqual(reader.execute("SELECT tokenize('alpha beta','owned')").fetchone()[0], tokens)
+            reader.execute("INSERT INTO owned(body) VALUES ('gamma alpha')")
+            self.assert_embeddings(reader, 'owned')
+            self.assertFalse(reader.execute("SELECT has_schema_privilege(current_user,'tokenizer_catalog','CREATE')").fetchone()[0])
+        after = self.db.execute("SELECT 'tokenizer_data.model_owned'::regclass::oid, pg_get_serial_sequence('tokenizer_data.model_owned','id')::regclass::oid").fetchone()
+        self.assertEqual(before, after)
+        self.assertEqual(self.db.execute("SELECT oid, relowner, relacl FROM pg_class WHERE oid = ANY(%s) ORDER BY oid", (list(after),)).fetchall(), identity)
+        self.assertEqual(self.db.execute("SELECT * FROM vocabulary_view WHERE token <> 'gamma' ORDER BY id").fetchall(), vocabulary)
+        self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.model_owned')").fetchone()[0])
+        with self.connect(user=self.outsider) as reader:
+            self.assertEqual(reader.execute("SELECT count(*) FROM tokenizer_data.model_owned").fetchone()[0], 3)
+            self.assertFalse(reader.execute("SELECT has_schema_privilege(current_user,'tokenizer_catalog','CREATE')").fetchone()[0])
+            self.assertTrue(reader.execute("SELECT has_schema_privilege(current_user,'tokenizer_data','CREATE WITH GRANT OPTION')").fetchone()[0])
+        self.db.execute("DROP VIEW vocabulary_view")
+        with self.connect(user=self.owner) as owner:
+            owner.execute("SELECT drop_custom_model('owned')")
+        self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_data.model_owned')").fetchone()[0])
+
+    def test_upgrade_from_100_runtime_schema_collision_rolls_back(self):
+        self.make_model(self.db)
+        self.db.execute("INSERT INTO race(body) VALUES ('alpha beta')")
+        self.db.execute("CREATE SCHEMA tokenizer_data; CREATE TABLE tokenizer_data.marker(id int)")
+        with self.assertRaises(psycopg.errors.DuplicateSchema):
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname='pg_tokenizer'").fetchone()[0], '1.0.0')
+        self.assertEqual(self.db.execute("SELECT tokenize('alpha beta','race')").fetchone()[0], [1, 2])
+        self.assertIsNotNone(self.db.execute("SELECT to_regclass('tokenizer_data.marker')").fetchone()[0])
+        self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.definition_version')").fetchone()[0])
+        self.db.execute("DROP SCHEMA tokenizer_data CASCADE")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT tokenize('alpha beta','race')").fetchone()[0], [1, 2])
+
+    def test_upgrade_from_100_serializes_custom_model_creation(self):
+        self.db.execute("CREATE TABLE during_upgrade(body text)")
+        self.db.execute("SELECT create_text_analyzer('during_upgrade','')")
+        with self.connect() as creator:
+            self.db.execute('BEGIN')
+            self.db.execute('LOCK TABLE tokenizer_catalog.model IN SHARE ROW EXCLUSIVE MODE')
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(creator.execute, "SELECT create_custom_model('during_upgrade', %s)",
+                                     ('table = "during_upgrade"\ncolumn = "body"\ntext_analyzer = "during_upgrade"',))
+                try:
+                    deadline = time.monotonic() + 5
+                    wait = None
+                    while time.monotonic() < deadline:
+                        wait = self.db.execute('SELECT wait_event FROM pg_stat_activity WHERE pid=%s', (creator.info.backend_pid,)).fetchone()[0]
+                        if wait == 'relation' or future.done():
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(wait, 'relation')
+                    self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+                    self.db.execute('COMMIT')
+                    with self.assertRaises(psycopg.errors.SerializationFailure):
+                        future.result(timeout=10)
+                finally:
+                    self.db.execute('ROLLBACK')
+            self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_data.model_during_upgrade')").fetchone()[0])
+            creator.execute("SELECT create_custom_model('during_upgrade', %s)",
+                            ('table = "during_upgrade"\ncolumn = "body"\ntext_analyzer = "during_upgrade"',))
+        self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.model_during_upgrade')").fetchone()[0])
+        self.assertIsNotNone(self.db.execute("SELECT to_regclass('tokenizer_data.model_during_upgrade')").fetchone()[0])
+        self.db.execute("INSERT INTO during_upgrade VALUES ('new token')")
+        self.assertEqual(self.db.execute("SELECT token FROM tokenizer_data.model_during_upgrade").fetchall(), [('new token',)])
+
+    def test_upgrade_from_100_retries_old_snapshot(self):
+        self.db.execute("SELECT create_text_analyzer('before_upgrade', '')")
+        with self.connect() as reader:
+            reader.execute('BEGIN ISOLATION LEVEL REPEATABLE READ')
+            self.assertEqual(reader.execute("SELECT apply_text_analyzer('hello', 'before_upgrade')").fetchone()[0], ['hello'])
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+            # The new relation is name-resolvable, but neither its catalog row
+            # nor its singleton is visible to this pre-upgrade snapshot.
+            self.assertEqual(reader.execute("SELECT count(*) FROM tokenizer_catalog.definition_version").fetchone()[0], 0)
+            self.assertEqual(reader.execute("SELECT oid FROM pg_class WHERE relname='definition_version'").fetchall(), [])
+            with self.assertRaises(psycopg.errors.SerializationFailure):
+                reader.execute("SELECT apply_text_analyzer('hello', 'before_upgrade')")
+            reader.execute('ROLLBACK')
+            self.assertEqual(reader.execute("SELECT apply_text_analyzer('hello', 'before_upgrade')").fetchone()[0], ['hello'])
+        # A genuinely missing singleton is still an error, not a legacy fallback.
+        self.db.execute('DELETE FROM tokenizer_catalog.definition_version')
+        with self.assertRaisesRegex(psycopg.errors.InternalError_, 'definition version is missing'):
+            self.db.execute("SELECT apply_text_analyzer('hello', 'before_upgrade')")
+
+    def test_upgrade_from_100_waits_for_existing_creator(self):
+        with self.connect() as creator:
+            creator.execute('BEGIN')
+            self.make_model(creator)
+            creator.execute("INSERT INTO race(body) VALUES ('alpha beta')")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(self.db.execute, "ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+                try:
+                    deadline = time.monotonic() + 5
+                    wait = None
+                    while time.monotonic() < deadline:
+                        creator.execute('SELECT pg_stat_clear_snapshot()')
+                        wait = creator.execute('SELECT wait_event FROM pg_stat_activity WHERE pid=%s', (self.db.info.backend_pid,)).fetchone()[0]
+                        if wait == 'relation' or future.done():
+                            break
+                        time.sleep(0.02)
+                    self.assertEqual(wait, 'relation')
+                    creator.execute('COMMIT')
+                    future.result(timeout=10)
+                finally:
+                    creator.execute('ROLLBACK')
+            self.assert_embeddings(creator)
+        self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.model_race')").fetchone()[0])
+        self.assertEqual(self.db.execute("SELECT token FROM tokenizer_data.model_race ORDER BY id").fetchall(), [('alpha',), ('beta',)])
+
+    def test_upgrade_from_100_rolls_back_partial_moves(self):
+        self.make_model(self.db, 'a_valid')
+        self.make_model(self.db, 'z_broken')
+        before = self.db.execute("SELECT 'tokenizer_catalog.model_a_valid'::regclass::oid").fetchone()[0]
+        self.db.execute('DROP TABLE tokenizer_catalog.model_z_broken')
+        with self.assertRaises(psycopg.errors.UndefinedTable):
+            self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT extversion FROM pg_extension WHERE extname='pg_tokenizer'").fetchone()[0], '1.0.0')
+        self.assertEqual(self.db.execute("SELECT 'tokenizer_catalog.model_a_valid'::regclass::oid").fetchone()[0], before)
+        self.assertIsNone(self.db.execute("SELECT to_regnamespace('tokenizer_data')").fetchone()[0])
+        self.assertIsNone(self.db.execute("SELECT to_regclass('tokenizer_catalog.definition_version')").fetchone()[0])
+        self.db.execute("SELECT drop_custom_model('z_broken')")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1'")
+        self.assertEqual(self.db.execute("SELECT 'tokenizer_data.model_a_valid'::regclass::oid").fetchone()[0], before)
+
     def test_upgrade_from_100_pins_dictionary_names(self):
         self.db.execute("CREATE SCHEMA dictionary_upgrade")
         self.db.execute("CREATE TEXT SEARCH DICTIONARY dictionary_upgrade.words (TEMPLATE = simple)")
@@ -1125,7 +1266,7 @@ class IntegrationTests(unittest.TestCase):
             "SELECT create_text_analyzer('stop_words', 'pre_tokenizer = \"unicode_segmentation\"\n[[token_filters]]\nstopwords = \"custom_stop\"')"
         )
         expected = self.db.execute("SELECT tokenize('alpha beta', 'race')").fetchone()[0]
-        vocabulary = self.db.execute("SELECT id, token FROM tokenizer_catalog.model_race ORDER BY id").fetchall()
+        vocabulary = self.db.execute("SELECT id, token FROM tokenizer_data.model_race ORDER BY id").fetchall()
         restored = self.dbname + "_restored"
         self.admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(restored)))
         try:
@@ -1138,20 +1279,20 @@ class IntegrationTests(unittest.TestCase):
                 input=dump, check=True, capture_output=True, text=True,
             )
             with psycopg.connect(self.dsn, dbname=restored, autocommit=True) as conn:
-                conn.execute("SET search_path = public, tokenizer_catalog")
+                conn.execute("SET search_path = public, tokenizer_catalog, tokenizer_data")
                 self.assertEqual(conn.execute("SELECT tokenize('alpha beta', 'race')").fetchone()[0], expected)
                 self.assertEqual(conn.execute("SELECT apply_text_analyzer('alpha beta', 'stop_words')").fetchone()[0], ["alpha"])
                 self.assertEqual(conn.execute(
                     "SELECT count(*) FROM tokenizer_catalog.stopwords WHERE name IN ('lucene_english', 'nltk_english', 'iso_english')"
                 ).fetchone()[0], 3)
                 self.assertEqual(conn.execute(
-                    "SELECT id, token FROM tokenizer_catalog.model_race ORDER BY id"
+                    "SELECT id, token FROM tokenizer_data.model_race ORDER BY id"
                 ).fetchall(), vocabulary)
                 conn.execute("INSERT INTO race(body) VALUES ('gamma alpha')")
                 self.assert_embeddings(conn)
                 # The identity sequence continues instead of reusing an ID.
                 self.assertEqual(conn.execute(
-                    "SELECT id FROM tokenizer_catalog.model_race WHERE token = 'gamma'"
+                    "SELECT id FROM tokenizer_data.model_race WHERE token = 'gamma'"
                 ).fetchone()[0], max(row[0] for row in vocabulary) + 1)
         finally:
             self.admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(restored)))
