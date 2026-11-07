@@ -1,5 +1,7 @@
 # pg_tokenizer phase 3 — 1.0.1 implementation and validation
 
+**Historical phase-3 record.** The final review, merge and acceptance are recorded in [FINAL.md](FINAL.md). In particular, its dictionary ambiguity rule supersedes the builtin preference described below. This report and its original evidence retain the state measured on November 7.
+
 2026-11-07, macOS arm64, PostgreSQL 18.6 (Homebrew), Rust 1.99.1, features `pg18 lindera-ipadic`.
 
 Implementation commit: `cddf6ac2969364f34c4029fea60367f90cafa890`, based on `4d955eb499cd42ae54183577a368e81b54c91f27` in `claude/review-fixes-20261106`. This is a local release candidate; no tag, push, PR, issue comment or issue closure was made. The tokenizer main checkout was not modified.

@@ -1,0 +1,9 @@
+{
+  "version": "1.0.1",
+  "cargo_fmt": "passed",
+  "taplo_fmt": "passed (0.10.0)",
+  "upgrade_chain": "0.1.0 -> 0.1.1 -> 1.0.0 -> 1.0.1",
+  "historical_install_sql": "unchanged",
+  "source_license_headers": "passed",
+  "AGENTS.md": "untracked and uncommitted"
+}

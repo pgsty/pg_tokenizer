@@ -1,0 +1,97 @@
+SET
+SET
+SET
+SET
+SET
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:8: NOTICE:  installing required extension "vector"
+CREATE EXTENSION
+CREATE EXTENSION
+CREATE EXTENSION
+DO
+ create_text_analyzer
+----------------------
+
+(1 row)
+
+ create_tokenizer
+------------------
+
+(1 row)
+
+CREATE TABLE
+INSERT 0 2000
+CREATE INDEX
+CREATE INDEX
+ANALYZE
+                                                                        QUERY PLAN
+-----------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Index Scan using combo_terms on combo_docs
+         Order By: (terms <&> to_bm25query((_analyze_to_tsvector_text('postgres ranking'::text, 'combo_words'::text))::tsvector, 'combo_terms'::regclass))
+(3 rows)
+
+                                                                               QUERY PLAN
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit
+   ->  Index Scan using combo_ids on combo_docs
+         Order By: (ids <&> to_bm25query((_tokens_to_tsvector_text((tokenize('postgres ranking'::text, 'combo_bert'::text))::text[]))::tsvector, 'combo_ids'::regclass))
+(3 rows)
+
+DO
+DELETE 666
+VACUUM
+ bm25_maintain | bm25_maintain
+---------------+---------------
+ f             | f
+(1 row)
+
+SELECT 4000
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: estimated memory usage is 64.25 KiB
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: using 1 threads
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: starting, clustering 4000 vectors of 4 dimension into 16 clusters, in 10 iterations
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 1
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 2
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 3
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 4
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 5
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 6
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 7
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 8
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 9
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: iteration 10
+psql:/Users/vonng/pgsty/pg_tokenizer/reports/phase3-1.0.1/scripts/combo.sql:53: INFO:  clustering: finished
+CREATE INDEX
+ANALYZE
+                      QUERY PLAN
+-------------------------------------------------------
+ Limit
+   ->  Index Scan using combo_rq on combo_vectors
+         Order By: (e <-> '[0.5,0.5,0.5,0.5]'::vector)
+(3 rows)
+
+DO
+DROP INDEX
+CREATE INDEX
+                      QUERY PLAN
+-------------------------------------------------------
+ Limit
+   ->  Index Scan using combo_g on combo_vectors
+         Order By: (e <-> '[0.5,0.5,0.5,0.5]'::vector)
+(3 rows)
+
+DO
+DROP TABLE
+ drop_tokenizer
+----------------
+
+(1 row)
+
+ drop_text_analyzer
+--------------------
+
+(1 row)
+
+    result
+--------------
+ combo passed
+(1 row)

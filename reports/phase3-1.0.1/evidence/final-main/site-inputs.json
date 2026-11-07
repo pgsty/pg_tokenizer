@@ -1,0 +1,16 @@
+{
+  "site_base_commit": "52318b7482722a5fa4798a659c563ff3afaea16e",
+  "themes_verified": [
+    "1.5.0 (committed dependency)",
+    "1.5.1 (existing working dependency)"
+  ],
+  "pages": {
+    "content/docs/tokenizer/installation.md": "dd78da9cc8fd2b98932656dc7322ee3dc10d7bb06f380e6ff7e0c87f9dd6399a",
+    "content/docs/tokenizer/installation.zh.md": "92c6bf93d9889e33c1bd8bf1be24a59c9484e1b1fb6e1f8d5217f0684e92370e",
+    "content/docs/tokenizer/reference.md": "86b8636d4e061df564f79228fabb67d7bea06f94684de43fc44e677599405386",
+    "content/docs/tokenizer/reference.zh.md": "5fea10836e47a4e26d25f3f6677476fa4576ce385c90b25d13d38a4bd2edfbd9",
+    "content/docs/tokenizer/text-analyzer.md": "85e92aa00cc3a2dd8e77357a756646573a5042a8e93782b5b5a9eec4681065c4",
+    "content/docs/tokenizer/text-analyzer.zh.md": "781d31901e2d04266a7fde886f9cc23cf32fae21c717b85c9482d2a096ae3b2e"
+  },
+  "site_commit": "85df61db153bd6cbffcf5b7319a00461c6e49378"
+}

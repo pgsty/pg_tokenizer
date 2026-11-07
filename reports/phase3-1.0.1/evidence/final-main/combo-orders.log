@@ -1,0 +1,6 @@
+vchord,vchord_bm25,pg_tokenizer: pass
+vchord,pg_tokenizer,vchord_bm25: pass
+vchord_bm25,vchord,pg_tokenizer: pass
+vchord_bm25,pg_tokenizer,vchord: pass
+pg_tokenizer,vchord,vchord_bm25: pass
+pg_tokenizer,vchord_bm25,vchord: pass
