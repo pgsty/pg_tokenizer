@@ -53,7 +53,7 @@
 
 > We utilize `TOML` syntax to express all configurations. Configurations that cannot be parsed or validated, including invalid regular expressions, raise SQLSTATE `22023` (`invalid_parameter_value`) with the parser's message as DETAIL.
 
-### Analysis resource budgets (1.0.1)
+### Analysis resource budgets (1.1.0)
 
 These positive session settings reject oversized input or expansion with SQLSTATE `54000`; results are never silently truncated. See [cancellation and resource use](07-limitation.md#cancellation-and-resource-use) for the accounting model and remaining third-party library limits.
 

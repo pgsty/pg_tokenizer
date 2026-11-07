@@ -159,23 +159,29 @@ sudo systemctl restart postgresql.service   # for pg_tokenizer running with syst
 CREATE EXTENSION pg_tokenizer;
 ```
 
-## Upgrading to 1.0.1
+## Upgrading to 1.1.0
 
-After installing the 1.0.1 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator:
+After installing the 1.1.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator:
 
 ```sql
-ALTER EXTENSION pg_tokenizer UPDATE TO '1.0.1';
+ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0';
 ```
 
-The upgrade path is available from 0.1.0, 0.1.1 and 1.0.0. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
+The direct upgrade is `1.0.0 → 1.1.0`; older 0.1.0 and 0.1.1 installations use the existing chain through 1.0.0. There is no published 1.0.1 release or migration step. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
 
-1.0.1 adds a transactional version table and definition triggers, corrects all catalog writers to `PARALLEL UNSAFE`, and pins legacy `pg_dict` names. Resolve missing or ambiguous legacy names before upgrading. A custom dictionary sharing a builtin name is ambiguous too; explicitly choose its schema or `pg_catalog`. SQL signatures, custom vocabulary IDs, and on-disk data remain unchanged. New input/output budgets can reject previously accepted large documents with SQLSTATE `54000`; review [the defaults and remaining library limits](07-limitation.md#cancellation-and-resource-use) before upgrading a bulk ingestion workload. Deploy the matching library to every replica and restart it as well. The old primary-only cache path remains active until the SQL upgrade has committed and replayed.
+1.1.0 adds a transactional version table and definition triggers, corrects all catalog writers to `PARALLEL UNSAFE`, and pins legacy `pg_dict` names. Resolve missing or ambiguous legacy names before upgrading. A custom dictionary sharing a builtin name is ambiguous too; explicitly choose its schema or `pg_catalog`. SQL signatures and custom vocabulary IDs are preserved. New input/output budgets can reject previously accepted large documents with SQLSTATE `54000`; review [the defaults and remaining library limits](07-limitation.md#cancellation-and-resource-use) before upgrading a bulk ingestion workload. Deploy the matching library to every replica and restart it as well. The old primary-only cache path remains active until the SQL upgrade has committed and replayed.
 
 The `full` and `precise` Jieba modes were swapped in 1.0.0 and earlier. Regenerate persisted output produced with either mode and rebuild dependent indexes after upgrading; the default `search` mode is unchanged.
 
+### Runtime vocabulary migration
+
+The upgrade moves registered `tokenizer_catalog.model_<name>` tables, their indexes and owned identity sequences into the extension-owned `tokenizer_data` schema. It uses `ALTER TABLE ... SET SCHEMA`, preserving OIDs, owners, table/sequence ACLs, token IDs, views and trigger dependencies. Existing nonowner schema USAGE/CREATE grants and grant options are copied to the data schema; CREATE is revoked from the catalog schema. Direct SQL that names an old vocabulary table must use `tokenizer_data.model_<name>` afterward. Function calls still use `tokenizer_catalog`; no data-schema search_path entry is required.
+
+An unrelated existing `tokenizer_data` schema, a missing registered vocabulary table or an object-name collision aborts the entire upgrade. Resolve the conflicting object explicitly and retry. Do not drop or rename application objects blindly. The upgrader must be able to alter every registered vocabulary table; if models have different owners, use a superuser. The upgrade locks the model catalog and vocabulary tables; finish long-running model-management transactions first. A statement whose snapshot predates the upgrade may receive SQLSTATE `40001`; retry its transaction with a new snapshot. The new library supports 1.0.0 SQL until the migration commits.
+
 ### Database-owner permissions
 
-Installation and upgrade grant `pg_database_owner` USAGE/CREATE on `tokenizer_catalog`, EXECUTE on its database-local functions, SELECT/INSERT/UPDATE/DELETE on catalog and model tables, and USAGE/SELECT on their sequences. Future objects created in that schema by the installing role receive the same table/sequence/function defaults; newly created custom models also explicitly grant access. The grants follow a database ownership change.
+Installation and upgrade grant `pg_database_owner` USAGE on `tokenizer_catalog`, USAGE/CREATE on `tokenizer_data`, EXECUTE on database-local management functions, SELECT/INSERT/UPDATE/DELETE on catalog and vocabulary tables, and USAGE/SELECT on their sequences. Newly created custom models explicitly grant table/sequence access. The grants follow a database ownership change. Nonowner CREATE grants are removed from `tokenizer_catalog`; PostgreSQL schema owners and roles with their privileges retain inherent owner powers.
 
 A non-superuser database owner can create/drop its own custom models, analyzers, tokenizers, stopwords, and synonyms after an administrator installs the extension. Grants do not transfer table ownership: dropping a model created by a different role still needs that object's owner or an administrator. Other application roles require explicit grants; the extension does not give PUBLIC schema access or catalog write privileges. Public API functions continue to execute with the caller's privileges. The internal version trigger is SECURITY DEFINER, uses a fixed search_path, and only increments its protected counter; PUBLIC receives SELECT on that counter.
 

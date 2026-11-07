@@ -2,7 +2,7 @@
 
 ## Backend-local definition caches
 
-Since 1.0.1, `pg_tokenizer` validates its backend-local analyzer, tokenizer, model, stopword and synonym caches against a one-row `tokenizer_catalog.definition_version` table. Statement triggers update the counter in the same transaction as the definition. The counter and definitions are read through the caller's SQL snapshot, including in transactions that have already written data. A later statement or transaction checks again; a running statement and a REPEATABLE READ transaction retain their snapshot's definition. Rollbacks and subtransaction aborts do not publish a changed version.
+Since 1.1.0, `pg_tokenizer` validates its backend-local analyzer, tokenizer, model, stopword and synonym caches against a one-row `tokenizer_catalog.definition_version` table. Statement triggers update the counter in the same transaction as the definition. The counter and definitions are read through the caller's SQL snapshot, including in transactions that have already written data. A later statement or transaction checks again; a running statement and a REPEATABLE READ transaction retain their snapshot's definition. Rollbacks and subtransaction aborts do not publish a changed version.
 
 Rollback cleanup is automatic, including when a subtransaction aborts while its outer transaction continues:
 
@@ -31,7 +31,7 @@ Definition-changing API calls still reject `PREPARE TRANSACTION`. Older installe
 
 ## Cancellation and resource use
 
-The following positive, session-settable limits are available in 1.0.1. Exceeding one raises SQLSTATE `54000`; output is never silently truncated.
+The following positive, session-settable limits are available in 1.1.0. Exceeding one raises SQLSTATE `54000`; output is never silently truncated.
 
 | Setting | Default | Scope |
 | --- | ---: | --- |
@@ -52,7 +52,7 @@ New `pg_dict` definitions store the schema-qualified dictionary resolved by thei
 
 Upgrade qualifies an old unqualified name only when exactly one dictionary has that name across all schemas. Missing or ambiguous names stop the upgrade with a hint to qualify the configuration first; the original creator's search_path cannot be reconstructed. A custom dictionary sharing a builtin name is also ambiguous, so explicitly choose either the custom schema or `pg_catalog` before upgrading. The same rule applies to legacy definitions loaded before the SQL upgrade. Changing dictionary behavior does not rewrite stored vectors or indexes.
 
-Catalog-writing functions are `PARALLEL UNSAFE`; read-only analysis remains `PARALLEL SAFE`. Database owners still have `CREATE` on `tokenizer_catalog` because custom-model vocabulary tables live there. A separate runtime schema is deferred: moving those tables, sequences, grants and triggers would introduce migration costs unrelated to cache correctness. Upgrade creates new objects without adopting pre-existing objects of the same name, so a collision fails transactionally and must be resolved by an administrator. The version table grants PUBLIC only SELECT; its trigger runs with a fixed `pg_catalog` search_path and has no public EXECUTE grant.
+Catalog-writing functions are `PARALLEL UNSAFE`; read-only analysis remains `PARALLEL SAFE`. Runtime vocabulary tables and sequences live in `tokenizer_data`; database owners receive CREATE there and only USAGE on `tokenizer_catalog`. Schema owners retain PostgreSQL's inherent owner powers. Upgrade preserves vocabulary OIDs, ownership, ACLs and dependencies; direct SQL using old qualified table names must change. It never adopts an unrelated schema or other pre-existing upgrade object. Conflicts fail transactionally and must be resolved by an administrator. Statements crossing the SQL upgrade with an older snapshot may receive SQLSTATE `40001` and need a transaction retry. The version table grants PUBLIC only SELECT; its trigger runs with a fixed `pg_catalog` search_path and has no public EXECUTE grant.
 
 ## Logical backups
 

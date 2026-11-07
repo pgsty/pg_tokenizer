@@ -45,6 +45,13 @@ jobs:
           taplo fmt --check
       - name: Rustfmt
         run: cargo fmt --check
+      - name: PGXN metadata and source archive
+        run: |
+          make meta
+          make dist
+          cd build/dist
+          sha256sum --check *.sha256
+          unzip -t *.zip
 
   lint:
     strategy:

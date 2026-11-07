@@ -28,7 +28,7 @@ INSERT INTO long_docs (id, passage) VALUES
 
 query IIT
 SELECT octet_length(token), char_length(token), left(token, 1)
-FROM tokenizer_catalog.model_long_model ORDER BY octet_length(token), token;
+FROM tokenizer_data.model_long_model ORDER BY octet_length(token), token;
 ----
 1 1 b
 1 1 d
@@ -48,7 +48,7 @@ query IT
 SELECT id, embedding = ARRAY(
     SELECT v.id FROM unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model(passage, 'long_words'))
         WITH ORDINALITY AS t(token, n)
-    JOIN tokenizer_catalog.model_long_model AS v USING (token) ORDER BY n)
+    JOIN tokenizer_data.model_long_model AS v USING (token) ORDER BY n)
 FROM long_docs ORDER BY id;
 ----
 1 t
@@ -89,15 +89,15 @@ t
 
 query T
 SELECT embedding = ARRAY[
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'x'),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('d', 2600)),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'd'),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'y'),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('e', 2600)),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('e', 2600)),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = repeat('e', 2600)),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'e'),
-    (SELECT id FROM tokenizer_catalog.model_long_model WHERE token = 'x')]
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = 'x'),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = repeat('d', 2600)),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = 'd'),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = 'y'),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = repeat('e', 2600)),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = repeat('e', 2600)),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = repeat('e', 2600)),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = 'e'),
+    (SELECT id FROM tokenizer_data.model_long_model WHERE token = 'x')]
 FROM long_docs WHERE id = 5;
 ----
 t
@@ -111,8 +111,8 @@ text_analyzer = 'long_words'
 $$);
 
 query T
-SELECT array_agg(token ORDER BY token COLLATE "C") = (SELECT array_agg(token ORDER BY token COLLATE "C") FROM tokenizer_catalog.model_long_model)
-FROM tokenizer_catalog.model_long_existing;
+SELECT array_agg(token ORDER BY token COLLATE "C") = (SELECT array_agg(token ORDER BY token COLLATE "C") FROM tokenizer_data.model_long_model)
+FROM tokenizer_data.model_long_existing;
 ----
 t
 

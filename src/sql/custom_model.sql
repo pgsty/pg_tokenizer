@@ -22,7 +22,7 @@ BEGIN
     FROM pg_catalog.unnest(tokenizer_catalog.apply_text_analyzer_for_custom_model(
         $1.%I::pg_catalog.text, %L::pg_catalog.text)) AS t(token)
     WHERE NOT EXISTS (
-        SELECT 1 FROM tokenizer_catalog.%I AS vocabulary WHERE vocabulary.token = t.token
+        SELECT 1 FROM tokenizer_data.%I AS vocabulary WHERE vocabulary.token = t.token
     )', target_column, text_analyzer, model_table) INTO missing USING NEW;
     IF missing IS NULL THEN
         RETURN NEW;
@@ -32,12 +32,12 @@ BEGIN
     -- Serialize vocabulary inserts for this model until commit; only writers
     -- that add tokens take this lock.
     PERFORM pg_catalog.pg_advisory_xact_lock(
-        1885828203, pg_catalog.to_regclass(pg_catalog.format('tokenizer_catalog.%I', model_table))::oid::int);
+        1885828203, pg_catalog.to_regclass(pg_catalog.format('tokenizer_data.%I', model_table))::oid::int);
     EXECUTE pg_catalog.format('
-    INSERT INTO tokenizer_catalog.%I (token)
+    INSERT INTO tokenizer_data.%I (token)
     SELECT t.token FROM pg_catalog.unnest($1) AS t(token)
     WHERE NOT EXISTS (
-        SELECT 1 FROM tokenizer_catalog.%I AS vocabulary WHERE vocabulary.token = t.token
+        SELECT 1 FROM tokenizer_data.%I AS vocabulary WHERE vocabulary.token = t.token
     )
     ORDER BY t.token COLLATE "C"
     ON CONFLICT (token) DO NOTHING', model_table, model_table) USING missing;

@@ -37,7 +37,7 @@ The administrator connection must be allowed to create databases and roles. Test
 create uniquely named databases/roles and remove them afterward. They verify
 opposite transaction token orders, concurrent multi-row inserts, complete stored
 embeddings after waiting, lock isolation between models, strong-isolation retries, rollback, non-superuser
-database owners, unrelated-role denial, Lindera file-dictionary privileges in fresh backends (the test writes a small user dictionary into the server's `pg_tokenizer` data directory), ownership changes, and the 0.1.0/0.1.1/1.0.0 to 1.0.1 upgrades
+database owners, unrelated-role denial, Lindera file-dictionary privileges in fresh backends (the test writes a small user dictionary into the server's `pg_tokenizer` data directory), ownership changes, and the 0.1.0/0.1.1/1.0.0 to 1.1.0 upgrades
 without rebuilding vocabularies or dropping dependent functions. They also check legacy three-argument triggers, fresh/upgrade catalog equivalence, sequence-name collisions, and qualified names shadowed by literal names containing dots. The regular SQL
 suite covers filtering, identifier/literal quoting, predicate-only updates, NULL
 sources, tsvector escaping, positions, limits, a native GIN phrase query, and Lindera
@@ -52,3 +52,5 @@ For a native package without embedded IPADIC, set `PG_TOKENIZER_TEST_LINDERA_DIC
 Run `python tests/test_preload.py` as a non-root OS user with `pg_config` on PATH. It creates and stops its own disposable cluster, checks startup with malformed/stale preload entries, verifies same-name model isolation between databases, and checks that a preloaded Lindera model with a user dictionary is usable by a role without `pg_read_server_files`. Set `PG_TOKENIZER_TEST_LIBRARY` to an absolute library path and `PG_TOKENIZER_TEST_SHAREDIR` to a staged share directory when testing an uninstalled PG18+ package.
 
 Run `python tests/test_standby.py` with the same staged library/share settings to test physical WAL replay in disposable primary/standby clusters. It pauses and resumes replay at explicit LSN barriers, retains a long-lived connection and an old transaction snapshot, promotes the standby, and restarts it after an immediate stop. It creates private ports and sockets and never restarts a shared server. Integration tests also assert writer parallel markings/plans, dictionary name/OID behavior, deterministic budget errors and fresh/upgrade equivalence. `PG_TOKENIZER_TEST_VERSION` can select a historical fresh install for before/after regression runs.
+
+The 1.1.0 cases also verify the runtime schema split, preserved object identities/ACLs, migration rollback after a partial move, both orders of concurrent creation and upgrade, old-snapshot retry, and schema-migration replay followed by promotion and crash recovery.

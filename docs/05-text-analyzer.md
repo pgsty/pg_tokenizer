@@ -29,7 +29,7 @@ We support following token filters:
 - `stemmer`: Stem tokens using the [Snowball stemmer](https://snowballstem.org/) algorithm.
 - `stopwords`: Filter out tokens that are in the stop words list.
 - `synonym`: Replace tokens with their synonyms.
-- `pg_dict`: Names are resolved and stored with their schema at creation in 1.0.1, and resolved again per batch after dictionary DDL. Process tokens using the [PostgreSQL dictionary](https://www.postgresql.org/docs/current/textsearch-dictionaries.html). You can integrate this with the PostgreSQL dictionary or other extensions that provide dictionaries.
+- `pg_dict`: Names are resolved and stored with their schema at creation in 1.1.0, and resolved again per batch after dictionary DDL. Process tokens using the [PostgreSQL dictionary](https://www.postgresql.org/docs/current/textsearch-dictionaries.html). You can integrate this with the PostgreSQL dictionary or other extensions that provide dictionaries.
 
 ### Supported algorithms for `stemmer`
 

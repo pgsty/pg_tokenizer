@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "existing release tag (v1.0.0 or 1.0.0)"
+        description: "existing release tag (v1.1.0 or 1.1.0)"
         required: true
         type: string
 
@@ -32,7 +32,7 @@ jobs:
             const version = process.env.INPUT_TAG.trim().replace(/^v/, '');
             const r = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
             if (!r.test(version)) {
-              core.setFailed('Invalid release version. Expected v1.0.0 or 1.0.0.');
+              core.setFailed('Invalid release version. Expected v1.1.0 or 1.1.0.');
               return;
             }
             const tag = `v${version}`;
@@ -110,7 +110,7 @@ jobs:
           if-no-files-found: error
 
   upload:
-    needs: ["prepare", "build"]
+    needs: ["prepare", "build", "source"]
     runs-on: "ubuntu-latest"
     permissions:
       contents: write
@@ -160,4 +160,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: gh release upload "$RELEASE_TAG" artifacts/*.deb artifacts/*.zip --clobber
+        run: gh release upload "$RELEASE_TAG" artifacts/*.deb artifacts/*.zip artifacts/*.sha256 --clobber
+
+  source:
+    needs: ["prepare"]
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build PGXN source archive
+        env:
+          RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.semver }}
+        run: |
+          make dist REF="$RELEASE_SHA"
+          test -f "build/dist/pg_tokenizer-$RELEASE_VERSION.zip"
+          cd build/dist
+          sha256sum --check *.sha256
+          unzip -t "pg_tokenizer-$RELEASE_VERSION.zip"
+      - name: Save source archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg-tokenizer-source
+          path: |
+            build/dist/*.zip
+            build/dist/*.sha256
+          if-no-files-found: error
