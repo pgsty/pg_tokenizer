@@ -729,6 +729,81 @@ class IntegrationTests(unittest.TestCase):
             0,
         )
 
+    def test_direct_catalog_prepare_cache_cleanup(self):
+        if self.db.execute("SHOW max_prepared_transactions").fetchone()[0] == "0":
+            self.skipTest("max_prepared_transactions = 0")
+        query = "SELECT apply_text_analyzer('Hello World', %s)"
+        version_query = (
+            "SELECT version FROM tokenizer_catalog.definition_version WHERE singleton"
+        )
+        update = "UPDATE tokenizer_catalog.text_analyzer SET config = %s WHERE name = %s"
+        prepared_config = json.dumps({
+            "character_filters": ["to_lowercase"],
+            "pre_tokenizer": "unicode_segmentation",
+            "token_filters": [],
+        })
+        replacement_config = json.dumps({
+            "character_filters": [],
+            "pre_tokenizer": {"regex": "[A-Z]"},
+            "token_filters": [],
+        })
+        for completion in ("ROLLBACK", "COMMIT"):
+            with self.subTest(completion=completion), self.connect() as writer:
+                analyzer = "prepared_" + completion.lower()
+                gid = self.dbname + "_" + completion.lower()
+                self.db.execute(
+                    "SELECT create_text_analyzer(%s, 'pre_tokenizer = \"unicode_segmentation\"')",
+                    (analyzer,),
+                )
+                original_version = self.db.execute(version_query).fetchone()[0]
+                writer.execute("BEGIN")
+                writer.execute(update, (prepared_config, analyzer))
+                prepared_version = writer.execute(version_query).fetchone()[0]
+                self.assertEqual(prepared_version, original_version + 1)
+                self.assertEqual(
+                    writer.execute(query, (analyzer,)).fetchone()[0], ["hello", "world"]
+                )
+                writer.execute(sql.SQL("PREPARE TRANSACTION {}").format(sql.Literal(gid)))
+                pending = True
+                try:
+                    self.db.execute(
+                        sql.SQL("{} PREPARED {}").format(sql.SQL(completion), sql.Literal(gid))
+                    )
+                    pending = False
+                    if completion == "ROLLBACK":
+                        self.assertEqual(
+                            self.db.execute(version_query).fetchone()[0], original_version
+                        )
+                    else:
+                        self.assertEqual(
+                            self.db.execute(query, (analyzer,)).fetchone()[0],
+                            ["hello", "world"],
+                        )
+                        self.assertEqual(
+                            writer.execute(query, (analyzer,)).fetchone()[0],
+                            ["hello", "world"],
+                        )
+                    self.db.execute(update, (replacement_config, analyzer))
+                    self.assertEqual(
+                        self.db.execute(version_query).fetchone()[0],
+                        prepared_version + (completion == "COMMIT"),
+                    )
+                    self.assertEqual(
+                        self.db.execute(query, (analyzer,)).fetchone()[0], ["H", "W"]
+                    )
+                    for _ in range(2):
+                        with writer.transaction():
+                            for _ in range(2):
+                                self.assertEqual(
+                                    writer.execute(query, (analyzer,)).fetchone()[0],
+                                    ["H", "W"],
+                                )
+                finally:
+                    if pending:
+                        self.db.execute(
+                            sql.SQL("ROLLBACK PREPARED {}").format(sql.Literal(gid))
+                        )
+
     def test_drop_custom_model_name_handling(self):
         # Invalid and reserved names keep the 1.0.0 warning; a valid name that
         # does not exist now warns instead of panicking. Tokenizers are kept.

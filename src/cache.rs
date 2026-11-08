@@ -124,12 +124,12 @@ fn check_catalog_version() -> bool {
     if !VALIDATION_CALLBACKS.swap(true, Ordering::SeqCst) {
         for event in [
             PgXactCallbackEvent::Commit,
-            PgXactCallbackEvent::Prepare,
             PgXactCallbackEvent::ParallelCommit,
         ] {
             register_xact_callback(event, end_validation);
         }
         for event in [
+            PgXactCallbackEvent::Prepare,
             PgXactCallbackEvent::Abort,
             PgXactCallbackEvent::ParallelAbort,
         ] {

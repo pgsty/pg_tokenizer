@@ -86,7 +86,7 @@ sudo systemctl start postgresql.service
 sudo systemctl enable postgresql.service
 ```
 
-2. Verify whether `$pkglibdir` and `$shardir` have been set by PostgreSQL. 
+2. Locate PostgreSQL's library and shared-data directories.
 
 ```sh
 pg_config --pkglibdir
@@ -107,15 +107,16 @@ wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.0.0/postgresql-1
 unzip pg_tokenizer.zip -d pg_tokenizer
 ```
 
-4. Copy the extension files to the PostgreSQL directory.
+4. Install the extension files into the PostgreSQL directories.
 
 ```sh
-# Copy library to `$pkglibdir`
-sudo cp pg_tokenizer/pg_tokenizer.so $(pg_config --pkglibdir)/
-# Copy schema to `$shardir`
-sudo cp pg_tokenizer/pg_tokenizer--*.sql $(pg_config --sharedir)/extension/
-sudo cp pg_tokenizer/pg_tokenizer.control $(pg_config --sharedir)/extension/
+# Install library into `$pkglibdir`
+sudo install -m 755 pg_tokenizer/pg_tokenizer.so "$(pg_config --pkglibdir)/"
+# Install schema and control files into `$sharedir`
+sudo install -m 644 pg_tokenizer/pg_tokenizer--*.sql pg_tokenizer/pg_tokenizer.control "$(pg_config --sharedir)/extension/"
 ```
+
+Use `install` to replace the library without truncating a file that PostgreSQL may already have loaded. Restart PostgreSQL afterward to load the installed library.
 
 5. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
 
@@ -169,7 +170,7 @@ ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0';
 COMMIT;
 ```
 
-The `1.0.0 → 1.1.0` script refuses `REPEATABLE READ` and `SERIALIZABLE` with SQLSTATE `25000`, including when they come from `default_transaction_isolation`. At those levels every statement of the script reuses the snapshot taken before it waits for the model catalog lock, so a custom model committed during that wait would be left behind in the old schema. An explicit `READ COMMITTED` transaction, as above, is enough. Package files must replace the installed library by rename, as `install(1)`, distribution packages, `cargo pgrx install` and `make install` do; never overwrite a library that the running server has preloaded in place.
+The `1.0.0 → 1.1.0` script refuses `REPEATABLE READ` and `SERIALIZABLE` with SQLSTATE `25000`, including when they come from `default_transaction_isolation`. At those levels every statement of the script reuses the snapshot taken before it waits for the model catalog lock, so a custom model committed during that wait would be left behind in the old schema. An explicit `READ COMMITTED` transaction, as above, is enough. Replace the installed library without truncating the existing file, for example with the `install` commands in the ZIP instructions; never overwrite a library that the running server has preloaded in place.
 
 The direct upgrade is `1.0.0 → 1.1.0`; older 0.1.0 and 0.1.1 installations use the existing chain through 1.0.0. There is no published 1.0.1 release or migration step. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
 
