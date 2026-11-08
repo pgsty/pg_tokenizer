@@ -88,7 +88,11 @@ make install PG_CONFIG=/path/to/pg_config DESTDIR=/tmp/tokenizer-stage
 `FEATURES` defaults to `lindera-ipadic`; select other embedded dictionaries
 explicitly when needed. The PostgreSQL feature comes from `PG_CONFIG`.
 `make install` verifies the staged version, PostgreSQL paths and file digests
-before copying files. `PGXN_BUILD_DIR` selects the staging directory.
+before copying files. Each file is copied next to its destination and renamed
+over it, so a running server keeps its mapped copy of the preloaded library
+until restart. A failed `make` discards the previous staging manifest, so a
+following `make install` cannot install an older build. `PGXN_BUILD_DIR`
+selects the staging directory.
 
 After publication, an appropriately provisioned machine can run:
 

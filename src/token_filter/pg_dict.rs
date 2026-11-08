@@ -52,7 +52,9 @@ impl PgDictTokenFilter {
         // shadows a pg_catalog builtin is ambiguous because the old creator's
         // search_path cannot be recovered.
         let name = if parts.len() == 1 {
-            let names: Vec<String> = crate::utils::spi_get_one(
+            // Read-only SPI under the loader's snapshot: definitions can load
+            // during a parallel query, where read-write SPI is rejected.
+            let names: Vec<String> = crate::utils::catalog_one(
                 "SELECT COALESCE(pg_catalog.array_agg(pg_catalog.format('%I.%I', n.nspname, d.dictname) \
                  ORDER BY n.nspname <> 'pg_catalog', n.nspname), ARRAY[]::text[]) \
                  FROM pg_catalog.pg_ts_dict d JOIN pg_catalog.pg_namespace n ON n.oid = d.dictnamespace \

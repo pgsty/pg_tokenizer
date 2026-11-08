@@ -19,7 +19,7 @@ use pgrx::{IntoDatum, WhoAllocated};
 use serde::{Deserialize, Serialize};
 
 use crate::text_analyzer::get_text_analyzer;
-use crate::utils::{invalid_config, raise_error, spi_get_one};
+use crate::utils::{catalog_one, invalid_config, raise_error, read_only_rows, spi_get_one};
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
 
@@ -60,17 +60,34 @@ fn lock_model_catalog() {
     pgrx::Spi::run("LOCK TABLE tokenizer_catalog.model IN ROW EXCLUSIVE MODE").unwrap();
 }
 
+// Vocabulary lookups normally keep pgrx's SPI mode: once a writer has an XID it
+// is read-write, so READ COMMITTED gets a fresh snapshot that sees IDs other
+// writers committed after the statement began (the target-column trigger
+// relies on this). A parallel operation cannot write, and PostgreSQL rejects
+// read-write SPI there because it advances the command counter. Read under the
+// query's own snapshot instead, as the leader and every worker share it.
+fn parallel_lookup() -> bool {
+    unsafe { pg_sys::IsInParallelMode() }
+}
+
 impl TokenizerModel for CustomModel {
     fn apply(&self, text: String) -> Vec<u32> {
         let query = format!(
             "SELECT id FROM {} WHERE token = $1",
             vocabulary_table(&self.name)
         );
+        let parallel = parallel_lookup();
 
         // The vocabulary stores long tokens as pieces; look up the same pieces.
         split_long_token(text)
             .into_iter()
-            .filter_map(|piece| spi_get_one::<i32>(&query, &[piece.into()]))
+            .filter_map(|piece| {
+                if parallel {
+                    catalog_one::<i32>(&query, &[piece.into()])
+                } else {
+                    spi_get_one::<i32>(&query, &[piece.into()])
+                }
+            })
             .map(|id| u32::try_from(id).unwrap())
             .collect()
     }
@@ -83,18 +100,25 @@ impl TokenizerModel for CustomModel {
         );
 
         let mut token_map = HashMap::new();
-        pgrx::Spi::connect(|client| {
-            let tuptable = client
-                .select(&query, None, &[tokens.clone().into()])
-                .unwrap_or_report();
-            for (i, tup) in tuptable.enumerate() {
-                crate::utils::check_for_interrupts_every(i);
-                let id: i32 = tup.get(1).unwrap_or_report().expect("no id value");
-                let id = u32::try_from(id).expect("id is not a valid u32");
-                let token: String = tup.get(2).unwrap_or_report().expect("no token value");
-                token_map.insert(token, id);
-            }
-        });
+        let mut insert = |id: Option<i32>, token: Option<String>| {
+            let id = u32::try_from(id.expect("no id value")).expect("id is not a valid u32");
+            token_map.insert(token.expect("no token value"), id);
+        };
+        if parallel_lookup() {
+            read_only_rows(&query, &[tokens.clone().into()], 0, |row| {
+                insert(row.get(1), row.get(2))
+            });
+        } else {
+            pgrx::Spi::connect(|client| {
+                let tuptable = client
+                    .select(&query, None, &[tokens.clone().into()])
+                    .unwrap_or_report();
+                for (i, tup) in tuptable.enumerate() {
+                    crate::utils::check_for_interrupts_every(i);
+                    insert(tup.get(1).unwrap_or_report(), tup.get(2).unwrap_or_report());
+                }
+            });
+        }
 
         tokens
             .into_iter()

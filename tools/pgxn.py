@@ -51,6 +51,19 @@ def build(args):
         raise ValueError("Install cargo-pgrx 0.19.3 to match this extension's pgrx version")
     root = args.build_dir.resolve()
     root.mkdir(parents=True, exist_ok=True)
+    # A failed build must not leave the previous manifest for `make install`
+    # to install. Its staging directory is removed once a new build succeeds.
+    manifest_path = root / "manifest.json"
+    previous = None
+    if manifest_path.exists():
+        try:
+            previous = json.loads(manifest_path.read_text()).get("package")
+        except (ValueError, AttributeError):
+            pass
+        manifest_path.unlink()
+    # Only ever remove a staging directory this tool created inside root.
+    if not (isinstance(previous, str) and previous.startswith("package-") and Path(previous).name == previous):
+        previous = None
     package = Path(tempfile.mkdtemp(prefix="package-", dir=root))
     try:
         subprocess.run(["cargo", "pgrx", "package", "--pg-config", args.pg_config,
@@ -68,17 +81,43 @@ def build(args):
         if f"default_version = '{version}'" not in control.read_text():
             raise ValueError("Staged control version does not match Cargo")
         manifest = {"version": version, "paths": paths, "package": package.name, "files": files}
-        (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        staged = root / "manifest.json.tmp"
+        staged.write_text(json.dumps(manifest, indent=2) + "\n")
+        os.replace(staged, manifest_path)
     except BaseException:
         shutil.rmtree(package)
         raise
+    if previous and previous != package.name and (root / previous).is_dir():
+        shutil.rmtree(root / previous)
     print(f"Staged pg_tokenizer {version} for {paths['version']} in {package}")
+
+
+def replace_file(source, destination):
+    """Install a file by renaming a complete copy over the destination.
+
+    A running server maps the preloaded library; rewriting that file in place
+    can crash every process using it. Like install(1) and cargo-pgrx, never
+    truncate an installed file: the old inode stays intact for running
+    processes until they exit, and readers never see a partial file.
+    """
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    os.close(descriptor)
+    try:
+        shutil.copy2(source, temporary)
+        os.replace(temporary, destination)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def install(args):
     version, _ = metadata(lambda name: Path(name).read_text())
     root = args.build_dir.resolve()
-    manifest = json.loads((root / "manifest.json").read_text())
+    manifest_path = root / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"No staged package in {root}; run make first")
+    manifest = json.loads(manifest_path.read_text())
     if manifest["version"] != version or manifest["paths"] != pg_paths(args.pg_config):
         raise ValueError("Staged package differs from the selected version/PostgreSQL; run make first")
     package = root / manifest["package"]
@@ -88,9 +127,7 @@ def install(args):
             raise ValueError(f"Staged file changed: {name}")
     prefix = Path(args.destdir).resolve() if args.destdir else Path("/")
     for name in manifest["files"]:
-        destination = prefix / name
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(package / name, destination)
+        replace_file(package / name, prefix / name)
     print(f"Installed {len(manifest['files'])} files under {prefix}")
 
 

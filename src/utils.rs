@@ -90,8 +90,45 @@ where
 /// pgrx's select() switches to read-write SPI once a transaction has an XID;
 /// that would give a version probe and the definition lookup different snapshots.
 pub fn catalog_one<T: FromDatum>(query: &str, args: &[DatumWithOid]) -> Option<T> {
+    read_only_rows(query, args, 1, |row| row.get::<T>(1))
+        .into_iter()
+        .next()
+        .flatten()
+}
+
+/// One row of a [`read_only_rows`] result, valid only inside its callback.
+pub struct ReadOnlyRow {
+    tuple: pgrx::pg_sys::HeapTuple,
+    descriptor: pgrx::pg_sys::TupleDesc,
+}
+
+impl ReadOnlyRow {
+    /// Decode a 1-based column into an owned Rust value; None for SQL NULL.
+    pub fn get<T: FromDatum>(&self, column: i32) -> Option<T> {
+        let mut is_null = false;
+        unsafe {
+            let datum =
+                pgrx::pg_sys::SPI_getbinval(self.tuple, self.descriptor, column, &mut is_null);
+            T::from_datum(datum, is_null)
+        }
+    }
+}
+
+/// Run a query with read-only SPI under the caller's active snapshot and decode
+/// every row (at most `limit`, 0 for all) before SPI memory is released.
+///
+/// Read-only SPI neither takes a new snapshot nor advances the command counter.
+/// The read-write SPI that pgrx's select() uses once a transaction has an XID
+/// does both, and PostgreSQL forbids advancing the command counter during a
+/// parallel operation.
+pub fn read_only_rows<R>(
+    query: &str,
+    args: &[DatumWithOid],
+    limit: std::ffi::c_long,
+    mut decode: impl FnMut(&ReadOnlyRow) -> R,
+) -> Vec<R> {
     use pgrx::pg_sys;
-    let query = std::ffi::CString::new(query).expect("catalog query contains no NUL");
+    let query = std::ffi::CString::new(query).expect("query contains no NUL");
     let mut types: Vec<_> = args.iter().map(|arg| arg.oid()).collect();
     let mut values: Vec<_> = args
         .iter()
@@ -112,17 +149,23 @@ pub fn catalog_one<T: FromDatum>(query: &str, args: &[DatumWithOid]) -> Option<T
             values.as_mut_ptr(),
             nulls.as_ptr(),
             true,
-            1,
+            limit,
         );
-        assert!(status >= 0, "catalog SPI query failed: {status}");
-        if pg_sys::SPI_processed == 0 {
-            return None;
+        assert!(status >= 0, "read-only SPI query failed: {status}");
+        let processed = pg_sys::SPI_processed as usize;
+        if processed == 0 {
+            return Vec::new();
         }
         let table = &*pg_sys::SPI_tuptable;
-        let mut is_null = false;
-        let datum = pg_sys::SPI_getbinval(*table.vals, table.tupdesc, 1, &mut is_null);
-        // Callers use owned Rust values (String, Vec<String>, i64).
-        T::from_datum(datum, is_null)
+        let mut rows = Vec::with_capacity(processed);
+        for i in 0..processed {
+            check_for_interrupts_every(i);
+            rows.push(decode(&ReadOnlyRow {
+                tuple: *table.vals.add(i),
+                descriptor: table.tupdesc,
+            }));
+        }
+        rows
     })
 }
 

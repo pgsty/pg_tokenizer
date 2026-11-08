@@ -1,5 +1,23 @@
 -- pg_tokenizer 1.1.0: bounded analysis and snapshot-aware definition caches.
 -- SQL signatures, vocabulary IDs, and object OIDs are preserved.
+
+-- The model lock below only helps if the catalog scans that follow it take new
+-- snapshots. Under REPEATABLE READ or SERIALIZABLE every statement of this
+-- script reuses the snapshot taken before the lock wait, so a custom model
+-- committed meanwhile would be missed and left in the old vocabulary schema.
+DO $isolation$
+BEGIN
+    -- READ UNCOMMITTED behaves as READ COMMITTED in PostgreSQL.
+    IF pg_catalog.current_setting('transaction_isolation') NOT IN ('read committed', 'read uncommitted') THEN
+        RAISE EXCEPTION 'pg_tokenizer 1.1.0 upgrade requires READ COMMITTED isolation'
+            USING ERRCODE = 'invalid_transaction_state',
+                  DETAIL = pg_catalog.format('The transaction uses %s; its snapshot can miss custom models committed while the upgrade waits for the model catalog.',
+                                             pg_catalog.upper(pg_catalog.current_setting('transaction_isolation'))),
+                  HINT = 'Run BEGIN ISOLATION LEVEL READ COMMITTED; ALTER EXTENSION pg_tokenizer UPDATE; COMMIT;';
+    END IF;
+END;
+$isolation$;
+
 LOCK TABLE tokenizer_catalog.model IN SHARE ROW EXCLUSIVE MODE;
 
 ALTER FUNCTION tokenizer_catalog.create_huggingface_model(text, text) PARALLEL UNSAFE;
