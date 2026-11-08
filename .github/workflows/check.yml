@@ -67,7 +67,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Set up Sccache
+        id: sccache
+        continue-on-error: true
         uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Fall back to uncached compilation
+        if: steps.sccache.outcome == 'failure'
+        run: echo 'RUSTC_WRAPPER=' >> "$GITHUB_ENV"
       - name: Set up Environment
         run: ./tools/setup.sh ${{ matrix.version }}
       - name: Clippy
