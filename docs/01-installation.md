@@ -2,6 +2,8 @@
 
 Version 1.1.0 release acceptance covers fresh installations on PostgreSQL 14–18. Upgrade instructions are retained for reference; upgrade compatibility, default-privilege migration and snapshots spanning an upgrade are outside this release's acceptance scope.
 
+The configuration examples assume no other preloaded libraries. If `shared_preload_libraries` already contains entries, preserve them when adding `pg_tokenizer.so`.
+
 ## Linux Packages via `pig`
 
 On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04/26.04 (PostgreSQL 14–18), you can install the native package built for your distribution and architecture from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see the package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
@@ -77,16 +79,12 @@ ZIP archives contain the extension library and SQL/control files without package
 
 For systems without a matching native package that cannot run a Docker container, follow these steps to install:
 
-1. Before install, make sure that you have the necessary packages installed, including `PostgreSQL`, `pg_config`, `unzip`, `wget`.
+1. Install PostgreSQL, its development tools, `unzip`, and `wget`. The following example uses Ubuntu 24.04 with the PostgreSQL Apt repository configured and PostgreSQL 17, matching the ZIP selected below. Put that major version's tools first in `PATH`.
 
 ```sh
-# Example for RHEL 9 dnf
-# Please check your package manager
-sudo dnf install -y unzip wget libpq-devel
-sudo dnf module install -y postgresql:15/server
-sudo postgresql-setup --initdb
-sudo systemctl start postgresql.service
-sudo systemctl enable postgresql.service
+sudo apt-get update
+sudo apt-get install -y postgresql-17 postgresql-server-dev-17 unzip wget
+export PATH="/usr/lib/postgresql/17/bin:$PATH"
 ```
 
 2. Locate PostgreSQL's library and shared-data directories.
@@ -94,12 +92,12 @@ sudo systemctl enable postgresql.service
 ```sh
 pg_config --pkglibdir
 # Print something similar to:
-# /usr/lib/postgresql/15/lib or
+# /usr/lib/postgresql/17/lib or
 # /usr/lib64/pgsql
 
 pg_config --sharedir
 # Print something similar to:
-# /usr/share/postgresql/15 or
+# /usr/share/postgresql/17 or
 # /usr/share/pgsql
 ```
 
@@ -141,9 +139,10 @@ CREATE EXTENSION IF NOT EXISTS pg_tokenizer;
 
 Before building from source, you could refer to the [development](02-development.md) guide to set up the development environment.
 
-1. Build and install the extension.
+1. In the cloned repository, select the release tag, then build and install the extension for the PostgreSQL installation selected by `pg_config`.
 
 ```sh
+git checkout v1.1.0
 cargo pgrx install --sudo --release --pg-config "$(command -v pg_config)" --features lindera-ipadic
 ```
 
