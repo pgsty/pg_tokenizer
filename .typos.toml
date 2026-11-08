@@ -10,4 +10,8 @@ ist = "ist"
 tocken = "tocken"
 
 [files]
-extend-exclude = ["assets/**/*", "tests/sqllogictest/*.slt"]
+extend-exclude = [
+    "assets/**/*",
+    "tests/sqllogictest/*.slt",
+    "reports/**/evidence/**/*.log",
+]
