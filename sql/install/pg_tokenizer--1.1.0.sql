@@ -25,7 +25,7 @@ CREATE TABLE tokenizer_catalog.stopwords (
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:395
+-- src/model/custom.rs:419
 CREATE FUNCTION custom_model_insert_trigger()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -179,7 +179,7 @@ AS 'MODULE_PATHNAME', 'apply_text_analyzer_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:383
+-- src/model/custom.rs:407
 -- pg_tokenizer::model::custom::apply_text_analyzer_for_custom_model
 CREATE  FUNCTION "apply_text_analyzer_for_custom_model"(
 	"text" TEXT, /* & str */
@@ -191,7 +191,7 @@ AS 'MODULE_PATHNAME', 'apply_text_analyzer_for_custom_model_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:175
+-- src/model/custom.rs:199
 -- pg_tokenizer::model::custom::create_custom_model
 CREATE  FUNCTION "create_custom_model"(
 	"name" TEXT, /* & str */
@@ -203,7 +203,7 @@ AS 'MODULE_PATHNAME', 'create_custom_model_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:397
+-- src/model/custom.rs:421
 -- pg_tokenizer::model::custom::create_custom_model_tokenizer_and_trigger
 CREATE  FUNCTION "create_custom_model_tokenizer_and_trigger"(
 	"tokenizer_name" TEXT, /* & str */
@@ -292,7 +292,7 @@ AS 'MODULE_PATHNAME', 'create_tokenizer_wrapper';
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:288
+-- src/model/custom.rs:312
 -- pg_tokenizer::model::custom::drop_custom_model
 CREATE  FUNCTION "drop_custom_model"(
 	"name" TEXT /* & str */
@@ -420,7 +420,7 @@ AS $$ SELECT tokenizer_catalog._tokens_to_tsvector_text(
 /* </end connected objects> */
 
 /* <begin connected objects> */
--- src/model/custom.rs:453
+-- src/model/custom.rs:477
 -- pg_tokenizer::model::custom::custom_model_tokenizer_set_target_column_trigger
 CREATE FUNCTION "custom_model_tokenizer_set_target_column_trigger"()
 	RETURNS TRIGGER

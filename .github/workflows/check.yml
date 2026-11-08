@@ -45,6 +45,8 @@ jobs:
           taplo fmt --check
       - name: Rustfmt
         run: cargo fmt --check
+      - name: PGXN tool unit tests
+        run: python3 tests/test_pgxn.py
       - name: PGXN metadata and source archive
         run: |
           make meta

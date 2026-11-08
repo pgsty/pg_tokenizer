@@ -930,6 +930,36 @@ class IntegrationTests(unittest.TestCase):
                 "SELECT count(*) FROM parallel_docs WHERE analyze_to_tsvector(body, 'parallel_words') @@ 'hello'"
             ).fetchone()[0], 1000)
 
+    def test_parallel_leader_custom_model_after_writes(self):
+        # Once a transaction has an XID, pgrx SPI is read-write. A leader that
+        # executes part of a parallel plan must still read vocabularies with
+        # read-only SPI: PostgreSQL forbids advancing the command counter there.
+        self.db.execute("CREATE TABLE parallel_vocab AS SELECT g AS id, 'w' || (g % 50) || ' x' || (g % 7) AS body FROM generate_series(1, 30000) g")
+        self.db.execute("ANALYZE parallel_vocab")
+        self.db.execute("SELECT create_text_analyzer('parallel_vocab', 'pre_tokenizer = \"unicode_segmentation\"')")
+        self.db.execute("SELECT create_custom_model('parallel_vocab', 'table = \"parallel_vocab\"\ncolumn = \"body\"\ntext_analyzer = \"parallel_vocab\"')")
+        self.db.execute("SELECT create_tokenizer('parallel_vocab', 'text_analyzer = \"parallel_vocab\"\nmodel = \"parallel_vocab\"')")
+        query = "SELECT count(*), sum(cardinality(tokenize(body, 'parallel_vocab'))) FROM parallel_vocab"
+        expected = self.db.execute(query).fetchone()
+        self.assertEqual(expected, (30000, 60000))
+        with self.connect() as conn:
+            for setting in ["parallel_setup_cost = 0", "parallel_tuple_cost = 0",
+                            "min_parallel_table_scan_size = 0", "max_parallel_workers_per_gather = 2",
+                            "parallel_leader_participation = on"]:
+                conn.execute("SET " + setting)
+            plan = conn.execute("EXPLAIN (FORMAT JSON) " + query).fetchone()[0]
+            self.assertIn("Gather", json.dumps(plan))
+            with conn.transaction():
+                conn.execute("SELECT pg_current_xact_id()")
+                self.assertEqual(conn.execute(query).fetchone(), expected)
+            # CREATE TABLE AS and REFRESH mark the command ID used themselves.
+            conn.execute("CREATE TABLE parallel_copy AS SELECT body, tokenize(body, 'parallel_vocab') AS ids FROM parallel_vocab")
+            conn.execute("CREATE MATERIALIZED VIEW parallel_view AS SELECT body, tokenize(body, 'parallel_vocab') AS ids FROM parallel_vocab WITH NO DATA")
+            conn.execute("REFRESH MATERIALIZED VIEW parallel_view")
+            for relation in ["parallel_copy", "parallel_view"]:
+                self.assertEqual(conn.execute(sql.SQL("SELECT count(*), sum(cardinality(ids)), count(*) FILTER (WHERE ids IS DISTINCT FROM tokenize(body, 'parallel_vocab')) FROM {}").format(sql.Identifier(relation))).fetchone(),
+                                 (30000, 60000, 0))
+
     def test_catalog_writers_are_parallel_unsafe(self):
         writers = self.db.execute("""
             SELECT proname, proparallel FROM pg_proc
@@ -1104,6 +1134,44 @@ class IntegrationTests(unittest.TestCase):
         self.assertIsNotNone(self.db.execute("SELECT to_regclass('tokenizer_data.model_during_upgrade')").fetchone()[0])
         self.db.execute("INSERT INTO during_upgrade VALUES ('new token')")
         self.assertEqual(self.db.execute("SELECT token FROM tokenizer_data.model_during_upgrade").fetchall(), [('new token',)])
+
+    def test_upgrade_from_100_requires_read_committed(self):
+        # Under REPEATABLE READ/SERIALIZABLE the migration's catalog scan would
+        # reuse a snapshot taken before its lock wait and miss models committed
+        # meanwhile, leaving them in tokenizer_catalog. The upgrade refuses.
+        self.make_model(self.db, 'before_upgrade')
+        version = "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
+        for isolation in ['REPEATABLE READ', 'SERIALIZABLE']:
+            with self.subTest(isolation=isolation):
+                self.db.execute(f'BEGIN ISOLATION LEVEL {isolation}')
+                try:
+                    with self.assertRaisesRegex(psycopg.errors.InvalidTransactionState, 'requires READ COMMITTED'):
+                        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
+                finally:
+                    self.db.execute('ROLLBACK')
+                self.assertEqual(self.db.execute(version).fetchone()[0], '1.0.0')
+        # A database default isolation level is refused the same way.
+        self.admin.execute(sql.SQL("ALTER DATABASE {} SET default_transaction_isolation = 'serializable'").format(
+            sql.Identifier(self.dbname)))
+        with self.connect() as upgrader:
+            with self.assertRaises(psycopg.errors.InvalidTransactionState):
+                upgrader.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
+            self.assertEqual(upgrader.execute(version).fetchone()[0], '1.0.0')
+            # READ COMMITTED takes a new snapshot after the lock, so a model
+            # committed after the transaction's first snapshot is still moved.
+            upgrader.execute('BEGIN ISOLATION LEVEL READ COMMITTED')
+            upgrader.execute('SELECT count(*) FROM tokenizer_catalog.model')
+            self.make_model(self.db, 'after_snapshot')
+            upgrader.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
+            upgrader.execute('COMMIT')
+        self.assertEqual(self.db.execute(version).fetchone()[0], '1.1.0')
+        self.assertEqual(self.db.execute("""SELECT relname FROM pg_class
+            WHERE relnamespace = 'tokenizer_catalog'::regnamespace AND relkind = 'r'
+              AND relname LIKE 'model\\_%'""").fetchall(), [])
+        for name in ['before_upgrade', 'after_snapshot']:
+            self.assertIsNotNone(self.db.execute("SELECT to_regclass(%s)", (f'tokenizer_data.model_{name}',)).fetchone()[0])
+            self.db.execute(sql.SQL("INSERT INTO {}(body) VALUES ('fresh words')").format(sql.Identifier(name)))
+            self.assert_embeddings(self.db, name)
 
     def test_upgrade_from_100_retries_old_snapshot(self):
         self.db.execute("SELECT create_text_analyzer('before_upgrade', '')")

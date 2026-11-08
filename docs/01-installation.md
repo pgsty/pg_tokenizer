@@ -161,11 +161,15 @@ CREATE EXTENSION pg_tokenizer;
 
 ## Upgrading to 1.1.0
 
-After installing the 1.1.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator:
+After installing the 1.1.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator. Run the update at `READ COMMITTED`:
 
 ```sql
+BEGIN ISOLATION LEVEL READ COMMITTED;
 ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0';
+COMMIT;
 ```
+
+The `1.0.0 → 1.1.0` script refuses `REPEATABLE READ` and `SERIALIZABLE` with SQLSTATE `25000`, including when they come from `default_transaction_isolation`. At those levels every statement of the script reuses the snapshot taken before it waits for the model catalog lock, so a custom model committed during that wait would be left behind in the old schema. An explicit `READ COMMITTED` transaction, as above, is enough. Package files must replace the installed library by rename, as `install(1)`, distribution packages, `cargo pgrx install` and `make install` do; never overwrite a library that the running server has preloaded in place.
 
 The direct upgrade is `1.0.0 → 1.1.0`; older 0.1.0 and 0.1.1 installations use the existing chain through 1.0.0. There is no published 1.0.1 release or migration step. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
 
