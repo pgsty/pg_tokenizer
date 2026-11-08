@@ -52,8 +52,8 @@ jobs:
           make meta
           make dist
           cd build/dist
-          sha256sum --check *.sha256
-          unzip -t *.zip
+          sha256sum --check -- *.sha256
+          unzip -t ./*.zip
 
   lint:
     strategy:

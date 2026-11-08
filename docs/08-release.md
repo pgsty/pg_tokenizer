@@ -1,30 +1,42 @@
 # Release and PGXN publication
 
-The next release is **1.1.0**, upgrading directly from **1.0.0**. The unpublished
-1.0.1 candidate is not a supported installed version. Historical review reports
-retain their original version names and measurements; they are excluded from
-the PGXN source ZIP.
+The release version is **1.1.0**. Release acceptance covers **fresh installations**;
+upgrade compatibility, default-privilege migration, snapshots spanning an upgrade,
+and staging manifests left by failed build preflight are outside this release's
+acceptance scope. Existing upgrade scripts remain available for separate
+evaluation. The unpublished 1.0.1 candidate is not a supported installed version.
+Historical review reports retain their original version names and measurements;
+they are excluded from the PGXN source ZIP.
 
 ## Release gates
 
 1. Review the final commit and run the Check workflow on PostgreSQL 14–18,
    Linux x86_64 and aarch64. Local macOS/PG18 results do not replace that matrix.
-2. Verify fresh installation, the `1.0.0 → 1.1.0` upgrade, older upgrade chains,
-   custom vocabulary IDs and ACLs, logical backups, standby replay, promotion,
-   and coexistence with `vchord` and `vchord_bm25`.
+2. Verify the actual release packages on fresh installations: custom vocabulary
+   IDs and permissions, prepared transactions, logical backups, preload startup,
+   standby replay and promotion. Existing upgrade regressions can still run,
+   but do not expand the acceptance scope above.
 3. Check Cargo.toml, Cargo.lock, generated install SQL and rendered control/META
    versions. Do not ship a 1.0.1 installation or migration script. The source
    control file keeps `@CARGO_VERSION@`; packaging substitutes it.
 4. Tag the accepted commit as `v1.1.0` when publishing. Dispatch Release with
    that tag. It requires a successful Check run on the same commit, builds the
-   ten Linux packages plus the PGXN source ZIP/checksum, and uploads to a
-   **draft** GitHub release. Review its assets and notes before publication.
-5. Publish the GitHub release and upload the identical source ZIP to PGXN.
-   Verify the indexed metadata, download checksum and installation afterward.
+   ten PostgreSQL/architecture combinations on Ubuntu 24.04, installs and tests
+   each generated DEB, compares its files with the matching ZIP, and uploads
+   the twenty binary archives plus the PGXN source ZIP/checksum and SHA256SUMS
+   to a **draft** GitHub release.
+5. Review the assets and English release notes. Link the GitHub notes to the
+   [English website notes](https://vchord.pgsty.com/blog/release/pg-tokenizer-1.1.0/)
+   and [Chinese website notes](https://vchord.pgsty.com/zh/blog/release/pg-tokenizer-1.1.0/);
+   both website pages must link back to the exact GitHub release tag.
+6. Public release and PGXN upload are separate actions. Only when requested,
+   publish the draft and upload the identical source ZIP to PGXN, then verify
+   the indexed metadata, download checksum and installation.
 
-Keep the [upgrade instructions](01-installation.md#upgrading-to-110) in the
-release notes. They cover the runtime schema move, dictionary ambiguity,
-Jieba output changes, replica restarts and resource budgets.
+State the fresh-installation acceptance scope and remaining
+[limitations](07-limitation.md) in the release notes. Keep the historical
+[upgrade instructions](01-installation.md#upgrading-to-110) available without
+presenting upgrades as accepted by this release.
 [Issue #13](https://github.com/pgsty/pg_tokenizer/issues/13) remains open:
 third-party library allocations and cancellation latency are not hard-bounded.
 The USERSET budgets are not a resource isolation boundary.
@@ -90,9 +102,9 @@ explicitly when needed. The PostgreSQL feature comes from `PG_CONFIG`.
 `make install` verifies the staged version, PostgreSQL paths and file digests
 before copying files. Each file is copied next to its destination and renamed
 over it, so a running server keeps its mapped copy of the preloaded library
-until restart. A failed `make` discards the previous staging manifest, so a
-following `make install` cannot install an older build. `PGXN_BUILD_DIR`
-selects the staging directory.
+until restart. Always require a successful `make` before running `make install`;
+a staging manifest alone does not prove that the latest build attempt succeeded.
+`PGXN_BUILD_DIR` selects the staging directory.
 
 After publication, an appropriately provisioned machine can run:
 

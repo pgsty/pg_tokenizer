@@ -100,6 +100,27 @@ jobs:
         run: ./tools/setup.sh ${{ matrix.version }}
       - name: Build
         run: ./tools/package.sh
+      - name: Install and verify release packages
+        run: |
+          sudo apt-get install -y "./build/postgresql-${VERSION}-pg-tokenizer_${SEMVER}-1_${PLATFORM}.deb"
+          unzip -q "./build/postgresql-${VERSION}-pg-tokenizer_${SEMVER}_${ARCH}-linux-gnu.zip" -d /tmp/tokenizer-zip
+          diff -r build/zip /tmp/tokenizer-zip
+          for file in build/zip/*; do
+            if [[ "$file" == *.so ]]; then
+              cmp "$file" "$(pg_config --pkglibdir)/$(basename "$file")"
+            else
+              cmp "$file" "$(pg_config --sharedir)/extension/$(basename "$file")"
+            fi
+          done
+          sudo install -m 644 sql/install/pg_tokenizer--0.1.0.sql sql/install/pg_tokenizer--0.1.1.sql sql/install/pg_tokenizer--1.0.0.sql "$(pg_config --sharedir)/extension/"
+          sudo systemctl start postgresql
+          psql -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION pg_tokenizer;'
+          sqllogictest --db "$USER" --user "$USER" './tests/**/*.slt'
+          python3 -m venv /tmp/tokenizer-tests
+          /tmp/tokenizer-tests/bin/pip install 'psycopg[binary]'
+          PG_TOKENIZER_TEST_DSN="host=localhost user=$USER dbname=$USER" timeout 180 /tmp/tokenizer-tests/bin/python tests/test_integration.py
+          timeout 120 /tmp/tokenizer-tests/bin/python tests/test_preload.py
+          timeout 120 /tmp/tokenizer-tests/bin/python tests/test_standby.py
       - name: Save packages
         uses: actions/upload-artifact@v4
         with:
@@ -115,19 +136,34 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
           pattern: pg-tokenizer-*
           merge-multiple: true
           path: artifacts
+      - name: Verify and checksum release assets
+        env:
+          RELEASE_VERSION: ${{ needs.prepare.outputs.semver }}
+        run: |
+          cd artifacts
+          sha256sum --check "pg_tokenizer-${RELEASE_VERSION}.zip.sha256"
+          sha256sum -- *.deb *.zip > SHA256SUMS
       - name: Prepare draft release
         uses: actions/github-script@v7
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
+          RELEASE_VERSION: ${{ needs.prepare.outputs.semver }}
         with:
           script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(`docs/release-notes/${process.env.RELEASE_VERSION}.md`, 'utf8');
             const tag = process.env.RELEASE_TAG;
             const { data: commit } = await github.rest.repos.getCommit({
               ...context.repo, ref: `refs/tags/${tag}`,
@@ -151,16 +187,16 @@ jobs:
               return;
             }
             await github.rest.repos.createRelease({
-              ...context.repo, tag_name: tag, name: tag, draft: true,
+              ...context.repo, tag_name: tag, name: `pg_tokenizer ${process.env.RELEASE_VERSION}`, draft: true,
               prerelease: tag.includes('-'),
-              body: 'Packages built from the release tag. Review CI results and release notes before publishing.',
+              body,
             });
       - name: Upload packages to draft
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: gh release upload "$RELEASE_TAG" artifacts/*.deb artifacts/*.zip artifacts/*.sha256 --clobber
+        run: gh release upload "$RELEASE_TAG" artifacts/*.deb artifacts/*.zip artifacts/*.sha256 artifacts/SHA256SUMS --clobber
 
   source:
     needs: ["prepare"]
@@ -182,7 +218,7 @@ jobs:
           make dist REF="$RELEASE_SHA"
           test -f "build/dist/pg_tokenizer-$RELEASE_VERSION.zip"
           cd build/dist
-          sha256sum --check *.sha256
+          sha256sum --check -- *.sha256
           unzip -t "pg_tokenizer-$RELEASE_VERSION.zip"
       - name: Save source archive
         uses: actions/upload-artifact@v4

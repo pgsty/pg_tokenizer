@@ -1,5 +1,7 @@
 # Installation
 
+Version 1.1.0 release acceptance covers fresh installations on PostgreSQL 14–18. Upgrade instructions are retained for reference; upgrade compatibility, default-privilege migration and snapshots spanning an upgrade are outside this release's acceptance scope.
+
 ## Linux Packages via `pig`
 
 On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04/26.04 (PostgreSQL 14–18), you can install the native package built for your distribution and architecture from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see the package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
@@ -13,6 +15,8 @@ pig ext add pg_tokenizer
 Native RPM/DEB packages do not embed Lindera dictionaries. Provide external dictionaries compiled with Lindera 6. GitHub `.deb`/ZIP packages enable `lindera-ipadic`; other dictionaries are optional build features.
 
 ## Docker
+
+The upstream images below do not establish availability of PGSTY's 1.1.0 release. Use the matching release package or source tag for a 1.1.0 installation.
 
 The [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/vchord/getting-started/vectorchord-suite/) Docker image comes pre-configured with the Vchord extension suite:
 - [`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer) - This extension (`pgsty/pg_tokenizer`)
@@ -46,11 +50,11 @@ CREATE EXTENSION pg_tokenizer;
 
 ## From Debian package
 
-Use the `.deb` built for the exact Debian or Ubuntu release, PostgreSQL major version, and CPU architecture of the target host. The package is built separately for the supported distributions; its dependency metadata and the target distribution determine compatibility. Do not infer compatibility from a generic GLIBC version floor.
+Use the `.deb` built for the exact distribution, PostgreSQL major version, and CPU architecture of the target host. GitHub 1.1.0 release packages are built on Ubuntu 24.04; use the Pigsty repository for native packages targeting other distributions. Dependency metadata and the target distribution determine compatibility. Do not infer compatibility from a generic GLIBC version floor.
 
 Debian packages (`.deb`) are used in distributions based on Debian, such as Ubuntu and many others. They can be installed by `dpkg` or `apt-get`.
 
-1. Download the deb package in [the release page](https://github.com/pgsty/pg_tokenizer/releases/latest), and type `sudo apt install postgresql-17-pg-tokenizer_*.deb` to install the deb package.
+1. Download the matching deb package from the [1.1.0 release page](https://github.com/pgsty/pg_tokenizer/releases/tag/v1.1.0). For PostgreSQL 17 on Ubuntu 24.04 amd64, run `sudo apt install ./postgresql-17-pg-tokenizer_1.1.0-1_amd64.deb`.
 
 2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
 
@@ -64,8 +68,7 @@ sudo systemctl restart postgresql.service   # for pg_tokenizer running with syst
 3. Connect to the database and enable the extension.
 
 ```sql
-DROP EXTENSION IF EXISTS pg_tokenizer;
-CREATE EXTENSION pg_tokenizer CASCADE;
+CREATE EXTENSION IF NOT EXISTS pg_tokenizer;
 ```
 
 ## From ZIP package
@@ -100,10 +103,10 @@ pg_config --sharedir
 # /usr/share/pgsql
 ```
 
-3. Download the zip package in [the release page](https://github.com/pgsty/pg_tokenizer/releases/latest) and extract it to a temporary directory.
+3. Download the matching ZIP package from the [1.1.0 release page](https://github.com/pgsty/pg_tokenizer/releases/tag/v1.1.0) and extract it to a temporary directory. This example targets PostgreSQL 17 on x86_64:
 
 ```sh
-wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.0.0/postgresql-17-pg-tokenizer_1.0.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
+wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.1.0/postgresql-17-pg-tokenizer_1.1.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
 unzip pg_tokenizer.zip -d pg_tokenizer
 ```
 
@@ -130,8 +133,7 @@ sudo systemctl restart postgresql.service   # for pg_tokenizer running with syst
 6. Connect to the database and enable the extension.
 
 ```sql
-DROP EXTENSION IF EXISTS pg_tokenizer;
-CREATE EXTENSION pg_tokenizer CASCADE;
+CREATE EXTENSION IF NOT EXISTS pg_tokenizer;
 ```
 
 
@@ -142,7 +144,7 @@ Before building from source, you could refer to the [development](02-development
 1. Build and install the extension.
 
 ```sh
-cargo pgrx install --sudo --release
+cargo pgrx install --sudo --release --pg-config "$(command -v pg_config)" --features lindera-ipadic
 ```
 
 2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
@@ -161,6 +163,8 @@ CREATE EXTENSION pg_tokenizer;
 ```
 
 ## Upgrading to 1.1.0
+
+Upgrade acceptance is outside this release's scope. In particular, existing per-schema default privileges and transactions retaining a snapshot across an upgrade need separate validation before an upgrade is used in production.
 
 After installing the 1.1.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator. Run the update at `READ COMMITTED`:
 

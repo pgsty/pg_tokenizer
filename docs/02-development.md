@@ -58,9 +58,12 @@ succeed. Run Release with either `v<version>` or `<version>` as its input. It
 resolves the existing tag to a commit, checks the Cargo version and install SQL,
 and builds all ten PostgreSQL/architecture combinations on Ubuntu 24.04.
 
-Only after every build succeeds does it upload the DEB and ZIP files to a draft
-GitHub Release. Review the test results, package compatibility, and release notes
-before publishing the draft. The upload job has `contents: write`; build jobs
+Each build installs its generated DEB, checks that its installed files match the
+ZIP, and runs the SQL, integration, preload and standby tests against that package.
+Only after every build and package test succeeds does it upload the DEB and ZIP
+files, source archive and checksums to a draft GitHub Release. Review the test
+results, package compatibility, and English release notes before publishing the
+draft. The upload job has `contents: write`; build jobs
 have read-only repository access. A moved tag or an already published release
 stops the upload. Do not move an existing release tag to include later fixes;
 prepare a new version and tag instead.

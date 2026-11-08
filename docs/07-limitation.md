@@ -25,7 +25,7 @@ Physical standbys use the same WAL-replicated counter. After replay reaches a de
 
 The version read is shared by repeated lookups within one statement; it does not scan definition tables or run once per token. Definition changes serialize on the counter row until transaction end and write one additional heap update plus WAL per modifying statement. Ordinary custom-vocabulary inserts do not update the counter. Keep definition-changing transactions short. Direct DML now invalidates caches too, but still bypasses API configuration validation and remains an administrative operation.
 
-Definition-changing API calls still reject `PREPARE TRANSACTION`. Older installed SQL versions use the original, primary-only shared-memory invalidation until `ALTER EXTENSION ... UPDATE` installs the new table and triggers.
+At `PREPARE TRANSACTION`, the preparing backend clears its derived objects and validation state. Later queries reload definitions under their own snapshots, including after another connection rolls back the prepared transaction and a different definition reuses its version number. Read-only transactions can be prepared; definition-changing API calls still reject `PREPARE TRANSACTION`. Older installed SQL versions use the original, primary-only shared-memory invalidation until `ALTER EXTENSION ... UPDATE` installs the new table and triggers.
 
 `apply_text_analyzer`, `tokenize`, and the native `tsvector` wrappers are `STABLE`, not immutable. Keep their output in ordinary columns maintained explicitly or by triggers. Do not use immutable wrappers to bypass PostgreSQL's expression-index/generated-column checks.
 

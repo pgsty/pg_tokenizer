@@ -6,7 +6,7 @@
 [![Version: v1.1.0](https://img.shields.io/badge/Version-v1.1.0-slategray?style=flat)](https://github.com/pgsty/pg_tokenizer/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-slategray?style=flat&logo=opensourceinitiative&logoColor=green)](https://github.com/pgsty/pg_tokenizer/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/pgsty/pg_tokenizer?style=flat&logo=github&logoColor=black&color=slategray)](https://star-history.com/#pgsty/pg_tokenizer&Date)
-[![PostgreSQL: 14-19](https://img.shields.io/badge/PG-14--19-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
+[![PostgreSQL: 14-18](https://img.shields.io/badge/PG-14--18-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
 
 **`pg_tokenizer`** is a standalone multilingual text analyzer and vocabulary tokenizer extension for PostgreSQL, designed to power full-text BM25 ranking with [`vchord_bm25`](https://github.com/pgsty/vchord_bm25) and hybrid retrieval with [`vchord`](https://github.com/pgsty/vchord).
 
@@ -35,9 +35,13 @@
 
 ## Version 1.1.0
 
-Version 1.1.0 upgrades directly from 1.0.0. It adds WAL-replicated definition invalidation for standbys and promotion, schema-bound PostgreSQL dictionaries, correct writer parallel markings, and configurable analysis budgets. Runtime vocabulary tables and their sequences move to `tokenizer_data`, so database owners no longer need CREATE on `tokenizer_catalog`. SQL signatures, object OIDs and vocabulary IDs are preserved.
+Version 1.1.0 adds WAL-replicated definition invalidation for standbys and promotion, schema-bound PostgreSQL dictionaries, correct writer parallel markings, and configurable analysis budgets. Runtime vocabulary tables and their sequences live in `tokenizer_data`, so database owners no longer need CREATE on `tokenizer_catalog`.
 
 It also fixes Lindera server-file permission checks, UTF-8 splitting of long custom tokens, repeated-lexeme `tsvector` conversion, trigger target coercion, and Jieba's swapped `full`/`precise` modes. Regenerate persisted output and rebuild dependent indexes if either Jieba mode was used in 1.0.0 or earlier. Analysis budgets reduce expansion risk but do not impose a hard memory or cancellation-time limit on third-party libraries.
+
+`PREPARE TRANSACTION` now discards local derived objects, including configurations loaded after direct catalog DML. A later rollback of the prepared transaction cannot leave a stale configuration cached when another transaction reuses its version number. Read-only transactions can still be prepared; definition-changing APIs continue to reject PREPARE.
+
+Release acceptance for 1.1.0 covers **fresh installations on PostgreSQL 14–18**. Upgrade scripts remain available, but upgrade compatibility, default-privilege migration and snapshots spanning an upgrade are outside this release's acceptance scope. See the [English release notes](https://vchord.pgsty.com/blog/release/pg-tokenizer-1.1.0/), [Chinese release notes](https://vchord.pgsty.com/zh/blog/release/pg-tokenizer-1.1.0/), and [GitHub release](https://github.com/pgsty/pg_tokenizer/releases/tag/v1.1.0).
 
 Version 1.0.0 was the first PGSTY release. It builds with pgrx 0.19.3 for PostgreSQL 14–18 and moves to Lindera 6.2, Jieba 0.11, and Hugging Face tokenizers 0.23. It adds native PostgreSQL `tsvector` output, filtered custom vocabularies with schema-qualified source tables, safe concurrent vocabulary writes, database-owner privileges, transaction-aware definition caches, preload models that survive cache invalidation and broken entries, and definition tables included in `pg_dump`. It fixes `ngram` for non-ASCII and short tokens, calls `pg_dict` dictionaries the way `ts_lexize` does, reserves the built-in stopword lists, and takes its Snowball stemmers from [`pgsty/rust-stemmers`](https://github.com/pgsty/rust-stemmers) 1.2.1 with unchanged output. Existing `tokenize()` calls still return `INT[]`.
 
@@ -67,6 +71,8 @@ sudo systemctl restart postgresql
 ```
 
 ### 2. Run with Docker
+
+The image below is maintained upstream and does not establish availability of PGSTY's 1.1.0 release. Use the matching 1.1.0 package or source tag when deploying this release.
 
 You can also start a ready-to-use container with the [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/vchord/getting-started/vectorchord-suite/) image, which bundles PostgreSQL, [`vchord`](https://github.com/pgsty/vchord), [`vchord_bm25`](https://github.com/pgsty/vchord_bm25), and [`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer):
 
