@@ -583,8 +583,8 @@ fn assign_target(
         }
         pg_sys::assign_expr_collations(std::ptr::null_mut(), expr);
         let estate = ExecutorState::new();
-        let state = pg_sys::ExecPrepareExpr(expr.cast(), estate.0);
-        let econtext = pg_sys::MakePerTupleExprContext(estate.0);
+        let state = pg_sys::ExecPrepareExpr(expr.cast(), estate.raw);
+        let econtext = pg_sys::MakePerTupleExprContext(estate.raw);
         let mut isnull = false;
         let result = pg_sys::ExecEvalExprSwitchContext(state, econtext, &mut isnull);
         if isnull {
@@ -600,27 +600,40 @@ fn assign_target(
 }
 
 // Owns an EState and frees it on every exit path.
-struct ExecutorState(*mut pg_sys::EState);
+struct ExecutorState {
+    raw: *mut pg_sys::EState,
+    caller_context: pg_sys::MemoryContext,
+}
 
 impl ExecutorState {
     fn new() -> Self {
-        Self(unsafe { pg_sys::CreateExecutorState() })
+        unsafe {
+            let caller_context = pg_sys::CurrentMemoryContext;
+            Self {
+                raw: pg_sys::CreateExecutorState(),
+                caller_context,
+            }
+        }
     }
 }
 
 impl Drop for ExecutorState {
     fn drop(&mut self) {
         unsafe {
+            // An expression error can unwind with its per-tuple context still
+            // current. Leave that context before deleting any executor-owned
+            // memory; the caller's context outlives this local executor state.
+            pg_sys::MemoryContextSwitchTo(self.caller_context);
             if std::thread::panicking() {
                 // Unwinding from an ERROR: like an aborting transaction, free
                 // the memory without running expression shutdown callbacks.
-                while !(*self.0).es_exprcontexts.is_null() {
-                    let first = (*(*(*self.0).es_exprcontexts).elements).ptr_value;
+                while !(*self.raw).es_exprcontexts.is_null() {
+                    let first = (*(*(*self.raw).es_exprcontexts).elements).ptr_value;
                     pg_sys::FreeExprContext(first.cast(), false);
                 }
-                pg_sys::MemoryContextDelete((*self.0).es_query_cxt);
+                pg_sys::MemoryContextDelete((*self.raw).es_query_cxt);
             } else {
-                pg_sys::FreeExecutorState(self.0);
+                pg_sys::FreeExecutorState(self.raw);
             }
         }
     }

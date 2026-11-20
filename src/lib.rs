@@ -23,7 +23,6 @@ pub mod utils;
 compile_error!("Target is not supported.");
 
 #[cfg(not(any(
-    feature = "pg14",
     feature = "pg15",
     feature = "pg16",
     feature = "pg17",
@@ -43,7 +42,7 @@ extern "C-unwind" fn _PG_init() {
     // Library worker threads must never call into PostgreSQL.
     utils::install_interrupt_check(|| {
         if is_main() {
-            pgrx::check_for_interrupts!();
+            pgrx::check_for_interrupts();
         }
     });
 

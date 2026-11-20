@@ -39,16 +39,17 @@ def metadata(read):
 def pg_paths(pg_config):
     info = {key: capture(pg_config, "--" + key) for key in ("version", "pkglibdir", "sharedir")}
     major = int(info["version"].split()[1].split(".")[0])
-    if major not in range(14, 19):
-        raise ValueError("This release supports PostgreSQL 14 through 18")
+    if major not in range(15, 20):
+        raise ValueError("This release supports PostgreSQL 15 through 19")
     return info
 
 
 def build(args):
     version, _ = metadata(lambda name: Path(name).read_text())
     paths = pg_paths(args.pg_config)
-    if capture("cargo", "pgrx", "--version") != "cargo-pgrx 0.19.3":
-        raise ValueError("Install cargo-pgrx 0.19.3 to match this extension's pgrx version")
+    pgrx_version = tomllib.loads(Path("Cargo.toml").read_text())["dependencies"]["pgrx"].removeprefix("=")
+    if capture("cargo", "pgrx", "--version") != f"cargo-pgrx {pgrx_version}":
+        raise ValueError(f"Install cargo-pgrx {pgrx_version} to match this extension's pgrx version")
     root = args.build_dir.resolve()
     root.mkdir(parents=True, exist_ok=True)
     # A failed build must not leave the previous manifest for `make install`
@@ -68,7 +69,8 @@ def build(args):
     try:
         subprocess.run(["cargo", "pgrx", "package", "--pg-config", args.pg_config,
                         "--out-dir", str(package), "--features", args.features,
-                        "--cargo=--locked"], check=True)
+                        "--cargo=--locked"], check=True,
+                       env={**os.environ, "PGRX_PG_CONFIG_PATH": args.pg_config})
         # cargo-pgrx scans sql/ only; this repository keeps migrations below it.
         extension_dir = package / paths["sharedir"].lstrip("/") / "extension"
         for script in sorted(Path("sql/upgrade").glob("pg_tokenizer--*--*.sql")):

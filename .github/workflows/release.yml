@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "existing release tag (v1.1.0 or 1.1.0)"
+        description: "existing release tag (v1.2.0 or 1.2.0)"
         required: true
         type: string
 
@@ -32,7 +32,7 @@ jobs:
             const version = process.env.INPUT_TAG.trim().replace(/^v/, '');
             const r = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
             if (!r.test(version)) {
-              core.setFailed('Invalid release version. Expected v1.1.0 or 1.1.0.');
+              core.setFailed('Invalid release version. Expected v1.2.0 or 1.2.0.');
               return;
             }
             const tag = `v${version}`;
@@ -61,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["14", "15", "16", "17", "18"]
+        version: ["15", "16", "17", "18", "19"]
         arch: ["x86_64", "aarch64"]
     runs-on: ${{ matrix.arch == 'x86_64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
 
@@ -117,7 +117,7 @@ jobs:
               cmp "$file" "$(pg_config --sharedir)/extension/$(basename "$file")"
             fi
           done
-          sudo install -m 644 sql/install/pg_tokenizer--0.1.0.sql sql/install/pg_tokenizer--0.1.1.sql sql/install/pg_tokenizer--1.0.0.sql "$(pg_config --sharedir)/extension/"
+          sudo install -m 644 sql/install/pg_tokenizer--0.1.0.sql sql/install/pg_tokenizer--0.1.1.sql sql/install/pg_tokenizer--1.0.0.sql sql/install/pg_tokenizer--1.1.0.sql "$(pg_config --sharedir)/extension/"
           sudo systemctl start postgresql
           psql -v ON_ERROR_STOP=1 -c 'CREATE EXTENSION pg_tokenizer;'
           sqllogictest --db "$USER" --user "$USER" './tests/**/*.slt'

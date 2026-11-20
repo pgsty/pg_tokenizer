@@ -1,13 +1,13 @@
 [package]
 name = "pg_tokenizer"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
+rust-version = "1.99.1"
 
 [lib]
 crate-type = ["cdylib", "lib"]
 
 [features]
-pg14 = ["pgrx/pg14", "pgrx-tests/pg14"]
 pg15 = ["pgrx/pg15", "pgrx-tests/pg15"]
 pg16 = ["pgrx/pg16", "pgrx-tests/pg16"]
 pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
@@ -26,7 +26,7 @@ dashmap = "6.2.1"
 jieba-rs = "0.11.0"
 lindera = "6.2.0"
 lindera-analysis = "6.2.0"
-pgrx = "=0.19.3"
+pgrx = "=0.20.0"
 regex = "1.13.1"
 rust-stemmers = { git = "https://github.com/pgsty/rust-stemmers.git", tag = "v1.2.1" }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -39,7 +39,7 @@ unicode-segmentation = "1.13.3"
 validator = { version = "0.21.0", features = ["derive"] }
 
 [dev-dependencies]
-pgrx-tests = "=0.19.3"
+pgrx-tests = "=0.20.0"
 
 [profile.release]
 opt-level = 3

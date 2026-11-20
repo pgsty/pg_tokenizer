@@ -9,7 +9,14 @@ sudo apt-get purge -y '^postgres.*' '^libpq.*'
 sudo apt-get install -y postgresql-common
 sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
 sudo apt-get install -y postgresql-server-dev-${version}
-sudo apt-get install -y postgresql-${version} python3-venv zip dpkg-dev
+sudo apt-get install -y postgresql-${version} python3-venv zip dpkg-dev clang-18 libclang-18-dev llvm-18
+
+export CC=clang-18 CLANG_PATH=/usr/bin/clang-18 LIBCLANG_PATH=/usr/lib/llvm-18/lib CLANG_NO_DEFAULT_CONFIG=1
+if [ -n "${GITHUB_ENV:-}" ]; then
+  for name in CC CLANG_PATH LIBCLANG_PATH CLANG_NO_DEFAULT_CONFIG; do
+    echo "$name=${!name}" >> "$GITHUB_ENV"
+  done
+fi
 
 echo "local all all trust" | sudo tee /etc/postgresql/${version}/main/pg_hba.conf
 echo "host all all 127.0.0.1/32 trust" | sudo tee -a /etc/postgresql/${version}/main/pg_hba.conf

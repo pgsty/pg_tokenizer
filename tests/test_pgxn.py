@@ -32,7 +32,7 @@ class InstallTests(unittest.TestCase):
         patches = [
             mock.patch.object(pgxn, "metadata", return_value=("1.1.0", "{}")),
             mock.patch.object(pgxn, "pg_paths", return_value=PATHS),
-            mock.patch.object(pgxn, "capture", return_value="cargo-pgrx 0.19.3"),
+            mock.patch.object(pgxn, "capture", return_value="cargo-pgrx 0.20.0"),
         ]
         for patch in patches:
             patch.start()
@@ -91,7 +91,8 @@ class InstallTests(unittest.TestCase):
     def test_successful_build_replaces_previous_stage(self):
         self.stage({"lib/pg_tokenizer.so": b"previous build"})
 
-        def package(argv, check):
+        def package(argv, check, env):
+            self.assertEqual(env["PGRX_PG_CONFIG_PATH"], "pg_config")
             out = Path(argv[argv.index("--out-dir") + 1])
             extension = out / PATHS["sharedir"].lstrip("/") / "extension"
             extension.mkdir(parents=True)

@@ -59,12 +59,16 @@ class IntegrationTests(unittest.TestCase):
             self.db.execute(
                 "ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC"
             )
-        version = (
-            "0.1.0"
-            if "from_010" in self._testMethodName
-            else ("1.0.0" if "from_100" in self._testMethodName else
-                  ("0.1.1" if "upgrade" in self._testMethodName else os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.1.0")))
-        )
+        if "from_010" in self._testMethodName:
+            version = "0.1.0"
+        elif "from_100" in self._testMethodName:
+            version = "1.0.0"
+        elif "from_110" in self._testMethodName:
+            version = "1.1.0"
+        elif "upgrade" in self._testMethodName:
+            version = "0.1.1"
+        else:
+            version = os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.2.0")
         self.db.execute(
             sql.SQL("CREATE EXTENSION pg_tokenizer VERSION {}").format(
                 sql.Literal(version)
@@ -531,6 +535,33 @@ class IntegrationTests(unittest.TestCase):
                 "SELECT to_regclass('tokenizer_data.model_invalid_filter')"
             ).fetchone()[0]
         )
+
+    def test_upgrade_from_110_preserves_definitions_and_tokens(self):
+        self.make_model(self.db, "release_upgrade")
+        self.db.execute("INSERT INTO release_upgrade(body) VALUES ('alpha beta alpha'), ('gamma beta')")
+        before = self.db.execute("SELECT body, embedding FROM release_upgrade ORDER BY body").fetchall()
+        analyzed = self.db.execute(
+            "SELECT analyze_to_tsvector('alpha beta alpha', 'release_upgrade')::text"
+        ).fetchone()[0]
+        definition = self.db.execute(
+            "SELECT config FROM tokenizer_catalog.text_analyzer WHERE name = 'release_upgrade'"
+        ).fetchone()[0]
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.2.0'")
+        self.assertEqual(self.db.execute(
+            "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
+        ).fetchone()[0], "1.2.0")
+        self.assertEqual(before, self.db.execute(
+            "SELECT body, embedding FROM release_upgrade ORDER BY body"
+        ).fetchall())
+        self.assertEqual(analyzed, self.db.execute(
+            "SELECT analyze_to_tsvector('alpha beta alpha', 'release_upgrade')::text"
+        ).fetchone()[0])
+        self.assertEqual(definition, self.db.execute(
+            "SELECT config FROM tokenizer_catalog.text_analyzer WHERE name = 'release_upgrade'"
+        ).fetchone()[0])
+        self.assert_embeddings(self.db, "release_upgrade")
+        self.db.execute("INSERT INTO release_upgrade(body) VALUES ('delta alpha')")
+        self.assert_embeddings(self.db, "release_upgrade")
 
     def test_upgrade_from_010(self):
         self.make_model(self.db)

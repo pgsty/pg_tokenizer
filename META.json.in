@@ -15,7 +15,7 @@
     }
   },
   "prereqs": {
-    "runtime": {"requires": {"PostgreSQL": ">= 14.0.0, < 19.0.0"}}
+    "runtime": {"requires": {"PostgreSQL": ">= 15.0.0, < 20.0.0"}}
   },
   "resources": {
     "homepage": "https://vchord.pgsty.com/docs/tokenizer/",

@@ -1,45 +1,25 @@
 # Release and PGXN publication
 
-The release version is **1.1.0**. Release acceptance covers **fresh installations**;
-upgrade compatibility, default-privilege migration, snapshots spanning an upgrade,
-and staging manifests left by failed build preflight are outside this release's
-acceptance scope. Existing upgrade scripts remain available for separate
-evaluation. The unpublished 1.0.1 candidate is not a supported installed version.
-Historical review reports retain their original version names and measurements;
-they are excluded from the PGXN source ZIP.
+The target release is **1.2.0**, supporting PostgreSQL 15–19.
 
 ## Release gates
 
-1. Review the final commit and run the Check workflow on PostgreSQL 14–18,
-   Linux x86_64 and aarch64. Local macOS/PG18 results do not replace that matrix.
-2. Verify the actual release packages on fresh installations: custom vocabulary
-   IDs and permissions, prepared transactions, logical backups, preload startup,
-   standby replay and promotion. Existing upgrade regressions can still run,
-   but do not expand the acceptance scope above.
+1. Run the Check workflow on PostgreSQL 15–19, Linux x86_64 and aarch64.
+2. Verify fresh installation and the 1.1.0 → 1.2.0 upgrade, including custom
+   vocabulary IDs, permissions, prepared transactions, preload startup,
+   standby replay and promotion. Keep the earlier migration regressions.
 3. Check Cargo.toml, Cargo.lock, generated install SQL and rendered control/META
-   versions. Do not ship a 1.0.1 installation or migration script. The source
-   control file keeps `@CARGO_VERSION@`; packaging substitutes it.
-4. Tag the accepted commit as `v1.1.0` when publishing. Dispatch Release with
-   that tag. It requires a successful Check run on the same commit, builds the
-   ten PostgreSQL/architecture combinations on Ubuntu 24.04, installs and tests
-   each generated DEB, compares its files with the matching ZIP, and uploads
-   the twenty binary archives plus the PGXN source ZIP/checksum and SHA256SUMS
-   to a **draft** GitHub release.
-5. Review the assets and English release notes. Link the GitHub notes to the
-   [English website notes](https://vchord.pgsty.com/blog/release/pg-tokenizer-1.1.0/)
-   and [Chinese website notes](https://vchord.pgsty.com/zh/blog/release/pg-tokenizer-1.1.0/);
-   both website pages must link back to the exact GitHub release tag.
-6. Public release and PGXN upload are separate actions. Only when requested,
-   publish the draft and upload the identical source ZIP to PGXN, then verify
-   the indexed metadata, download checksum and installation.
+   versions. The source control file keeps `@CARGO_VERSION@`; packaging
+   substitutes the release version.
+4. Tag the accepted commit as `v1.2.0` and dispatch Release with that tag.
+   It requires a successful Check run on the same commit, builds and tests ten
+   PostgreSQL/architecture combinations on Ubuntu 24.04, then uploads binary
+   packages, the PGXN source archive and checksums to a draft GitHub release.
+5. Review the assets and [release notes](release-notes/1.2.0.md) before publishing.
+   GitHub publication and PGXN upload are separate operations.
 
-State the fresh-installation acceptance scope and remaining
-[limitations](07-limitation.md) in the release notes. Keep the historical
-[upgrade instructions](01-installation.md#upgrading-to-110) available without
-presenting upgrades as accepted by this release.
-[Issue #13](https://github.com/pgsty/pg_tokenizer/issues/13) remains open:
-third-party library allocations and cancellation latency are not hard-bounded.
-The USERSET budgets are not a resource isolation boundary.
+See [upgrading](01-installation.md#upgrading) for migration instructions and
+[limitations](07-limitation.md) for resource budgets and library constraints.
 
 ## PGXN account and distribution
 
@@ -52,7 +32,7 @@ administrators before uploading.
 
 The [PGXN upload guide](https://manager.pgxn.org/howto) describes source archives
 and META.json. This repository provides `META.json.in`, with Apache-2.0 licensing,
-PGSTY maintainer details, PostgreSQL 14–18 requirements, repository links and the
+PGSTY maintainer details, PostgreSQL 15–19 requirements, repository links and the
 installed extension's version. `make dist` renders META.json and the control
 file into a ZIP rooted at `pg_tokenizer-<version>/`, using a committed Git ref.
 It includes source, embedded assets, Cargo.lock, historical SQL and migrations;
@@ -61,9 +41,9 @@ files for portable ZIP extraction. Repeated builds of the same ref produce
 the same archive in the same Python/zlib environment.
 
 ```bash
-make dist REF=v1.1.0
-unzip build/dist/pg_tokenizer-1.1.0.zip -d /tmp/tokenizer-source
-cd /tmp/tokenizer-source/pg_tokenizer-1.1.0
+make dist REF=v1.2.0
+unzip build/dist/pg_tokenizer-1.2.0.zip -d /tmp/tokenizer-source
+cd /tmp/tokenizer-source/pg_tokenizer-1.2.0
 validate_pgxn_meta META.json
 ```
 
@@ -85,12 +65,11 @@ upgrade scripts.
 Before building, install Python 3.11+, GNU Make, PostgreSQL server/development
 files and `pg_config`, a Rust toolchain supported by the locked dependencies,
 Clang/libclang and the platform C/C++ build tools. The local acceptance uses
-Rust 1.99.1 and cargo-pgrx 0.19.3. Cargo needs network access or a populated
+Rust 1.99.1 and cargo-pgrx 0.20.0. Cargo needs network access or a populated
 cache for crates, the locked Snowball Git dependency and dictionary assets.
 
 ```bash
-cargo install cargo-pgrx --version 0.19.3 --locked
-cargo pgrx init --pg18=/path/to/pg_config
+cargo install cargo-pgrx --version 0.20.0 --locked
 make PG_CONFIG=/path/to/pg_config
 # Inspect a private installation before installing into PostgreSQL:
 make install PG_CONFIG=/path/to/pg_config DESTDIR=/tmp/tokenizer-stage
@@ -109,7 +88,7 @@ a staging manifest alone does not prove that the latest build attempt succeeded.
 After publication, an appropriately provisioned machine can run:
 
 ```bash
-pgxn install --pg_config /path/to/pg_config pg_tokenizer=1.1.0
+pgxn install --pg_config /path/to/pg_config pg_tokenizer=1.2.0
 ```
 
 The client also accepts a local source ZIP, so the same build/install path can
@@ -124,7 +103,7 @@ upload API. For a manual API upload, curl prompts for the password:
 
 ```bash
 curl --fail-with-body --user YOUR_PGXN_USER \
-  --form dist=@build/dist/pg_tokenizer-1.1.0.zip \
+  --form dist=@build/dist/pg_tokenizer-1.2.0.zip \
   https://manager.pgxn.org/upload
 ```
 
@@ -137,5 +116,5 @@ Git, release notes or command-line password arguments.
 After uploading, inspect the distribution and extension records in the public
 PGXN API, compare the downloaded ZIP against its SHA-256 file, and install it
 on a clean supported PostgreSQL host. Test both fresh creation and upgrade
-from an existing 1.0.0 database, including a custom vocabulary. Record the
+from an existing 1.1.0 database, including a custom vocabulary. Record the
 release commit, artifact hashes and results in the release tracker.

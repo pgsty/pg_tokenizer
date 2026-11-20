@@ -1,12 +1,12 @@
 # Installation
 
-Version 1.1.0 release acceptance covers fresh installations on PostgreSQL 14–18. Upgrade instructions are retained for reference; upgrade compatibility, default-privilege migration and snapshots spanning an upgrade are outside this release's acceptance scope.
+pg_tokenizer supports PostgreSQL 15–19. Choose packages built for your PostgreSQL major version, operating system, and CPU architecture.
 
 The configuration examples assume no other preloaded libraries. If `shared_preload_libraries` already contains entries, preserve them when adding `pg_tokenizer.so`.
 
 ## Linux Packages via `pig`
 
-On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04/26.04 (PostgreSQL 14–18), you can install the native package built for your distribution and architecture from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see the package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
+On supported Linux distributions, you can install the native package built for your distribution and architecture from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see the package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
 
 ```bash
 curl -fsSL https://repo.pigsty.io/pig | bash
@@ -18,7 +18,7 @@ Native RPM/DEB packages do not embed Lindera dictionaries. Provide external dict
 
 ## Docker
 
-The upstream images below do not establish availability of PGSTY's 1.1.0 release. Use the matching release package or source tag for a 1.1.0 installation.
+Check the extension versions included in a container image before using it.
 
 The [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/vchord/getting-started/vectorchord-suite/) Docker image comes pre-configured with the Vchord extension suite:
 - [`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer) - This extension (`pgsty/pg_tokenizer`)
@@ -142,7 +142,6 @@ Before building from source, you could refer to the [development](02-development
 1. In the cloned repository, select the release tag, then build and install the extension for the PostgreSQL installation selected by `pg_config`.
 
 ```sh
-git checkout v1.1.0
 cargo pgrx install --sudo --release --pg-config "$(command -v pg_config)" --features lindera-ipadic
 ```
 
@@ -161,7 +160,18 @@ sudo systemctl restart postgresql.service   # for pg_tokenizer running with syst
 CREATE EXTENSION pg_tokenizer;
 ```
 
-## Upgrading to 1.1.0
+## Upgrading
+
+For an existing 1.1.0 installation, install the new library and SQL files, restart PostgreSQL, and run:
+
+```sql
+ALTER EXTENSION pg_tokenizer UPDATE;
+```
+
+The 1.1.0 → 1.2.0 upgrade preserves catalog data, tokenizer definitions, and token IDs. Update and restart replicas with the matching library as well.
+
+### Upgrading from versions before 1.1.0
+
 
 Upgrade acceptance is outside this release's scope. In particular, existing per-schema default privileges and transactions retaining a snapshot across an upgrade need separate validation before an upgrade is used in production.
 

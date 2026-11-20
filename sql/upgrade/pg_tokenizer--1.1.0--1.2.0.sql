@@ -1,0 +1,1 @@
+-- pgrx and PostgreSQL compatibility update; catalog and tokenizer definitions are unchanged.

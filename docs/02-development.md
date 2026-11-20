@@ -1,5 +1,7 @@
 # Development
 
+Requires Rust 1.99.1+, PostgreSQL 15–19 development headers, and matching Clang, libclang, and LLVM tools. Set `CLANG_PATH` and `LIBCLANG_PATH` when multiple LLVM installations are present; use `CLANG_NO_DEFAULT_CONFIG=1` when Clang loads a default configuration.
+
 ## Set up development environment
 
 
@@ -40,14 +42,14 @@ RUST_BACKTRACE=1 cargo pgrx run --profile dev-opt
 
 ## CI and release packages
 
-The Check workflow tests PostgreSQL 14–18 on x86_64 and aarch64. It runs Rust
+The Check workflow tests PostgreSQL 15–19 on x86_64 and aarch64. It runs Rust
 checks and unit tests, then installs the extension with `lindera-ipadic` and runs
 the SQL, concurrency, permission, and upgrade suites. Matrix failures do not
 cancel the remaining platforms.
 
 Do not add `--no-gc-sections` to global `RUSTFLAGS` or Cargo configuration. It
 prevents unit-test executables from discarding unused PostgreSQL references and
-causes undefined-symbol linker failures. With cargo-pgrx 0.19.3, the schema,
+causes undefined-symbol linker failures. With cargo-pgrx 0.20.0, the schema,
 install, and package commands handle schema-section retention for the extension
 library separately. `tools/package.sh` generates the schema and library from the
 same locked release build, with the same IPADIC feature as CI.
