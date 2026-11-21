@@ -620,17 +620,16 @@ impl ExecutorState {
 impl Drop for ExecutorState {
     fn drop(&mut self) {
         unsafe {
+            if pg_sys::proc_exit_inprogress || !pg_sys::IsTransactionState() {
+                return;
+            }
             // An expression error can unwind with its per-tuple context still
             // current. Leave that context before deleting any executor-owned
             // memory; the caller's context outlives this local executor state.
             pg_sys::MemoryContextSwitchTo(self.caller_context);
             if std::thread::panicking() {
-                // Unwinding from an ERROR: like an aborting transaction, free
-                // the memory without running expression shutdown callbacks.
-                while !(*self.raw).es_exprcontexts.is_null() {
-                    let first = (*(*(*self.raw).es_exprcontexts).elements).ptr_value;
-                    pg_sys::FreeExprContext(first.cast(), false);
-                }
+                // Unwinding from an ERROR: delete es_query_cxt (including any
+                // child per-tuple contexts) without running shutdown callbacks.
                 pg_sys::MemoryContextDelete((*self.raw).es_query_cxt);
             } else {
                 pg_sys::FreeExecutorState(self.raw);

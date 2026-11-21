@@ -67,6 +67,9 @@ fn end_validation() {
 fn check_catalog_version() -> bool {
     use pgrx::pg_sys;
     let snapshot = unsafe { pg_sys::GetActiveSnapshot() };
+    if snapshot.is_null() {
+        return false;
+    }
     let worker = unsafe { pg_sys::ParallelWorkerNumber } >= 0;
     let key = SnapshotKey {
         statement: unsafe { pg_sys::GetCurrentStatementStartTimestamp() },

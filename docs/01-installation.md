@@ -1,12 +1,12 @@
 # Installation
 
-pg_tokenizer supports PostgreSQL 15–19. Choose packages built for your PostgreSQL major version, operating system, and CPU architecture.
+`pg_tokenizer` 1.2.0 supports **PostgreSQL 15–19** on **`x86_64` and `aarch64`**.
 
-The configuration examples assume no other preloaded libraries. If `shared_preload_libraries` already contains entries, preserve them when adding `pg_tokenizer.so`.
+`pg_tokenizer` must be loaded via `shared_preload_libraries` before PostgreSQL starts. If `shared_preload_libraries` already lists other extensions (such as `vchord` or `vchord_bm25`), keep them when adding `pg_tokenizer`.
 
-## Linux Packages via `pig`
+## Linux Packages via Pigsty (Recommended)
 
-On supported Linux distributions, you can install the native package built for your distribution and architecture from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (see the package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
+On EL 8/9/10, Debian 12/13, and Ubuntu 22.04/24.04, install native packages from the [Pigsty repository](https://pigsty.io/ext/e/pg_tokenizer) (full package matrix on [pgext.cloud](https://pgext.cloud/ext/pg_tokenizer)):
 
 ```bash
 curl -fsSL https://repo.pigsty.io/pig | bash
@@ -14,206 +14,115 @@ pig repo add pgsql -u
 pig ext add pg_tokenizer
 ```
 
-Native RPM/DEB packages do not embed Lindera dictionaries. Provide external dictionaries compiled with Lindera 6. GitHub `.deb`/ZIP packages enable `lindera-ipadic`; other dictionaries are optional build features.
+Pigsty RPM and DEB packages omit embedded Lindera dictionaries to keep package sizes small; provide external dictionaries compiled with Lindera 6 when using Lindera models. GitHub Release `.deb` and `.zip` packages enable `lindera-ipadic` with embedded IPADIC.
 
-## Docker
+## GitHub Release Packages (`.deb` and `.zip`)
 
-Check the extension versions included in a container image before using it.
+[GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases) provide `.deb` and `.zip` binaries for PostgreSQL 15–19 on `x86_64` (`amd64`) and `aarch64` (`arm64`).
 
-The [`tensorchord/vchord-suite`](https://vchord.pgsty.com/docs/vchord/getting-started/vectorchord-suite/) Docker image comes pre-configured with the Vchord extension suite:
-- [`pg_tokenizer`](https://github.com/pgsty/pg_tokenizer) - This extension (`pgsty/pg_tokenizer`)
-- [`vchord_bm25`](https://github.com/pgsty/vchord_bm25) - Native BM25 Ranking Index (`pgsty/vchord_bm25`)
-- [`vchord`](https://github.com/pgsty/vchord) - Scalable, high-performance, and disk-efficient vector similarity search (`pgsty/vchord`)
-- [`pgvector`](https://github.com/pgvector/pgvector) - Popular vector similarity search
+Prebuilt GitHub binaries are compiled on Ubuntu 24.04 and require **`glibc >= 2.39`** (Ubuntu 24.04+ or Debian 13+). On older distributions such as EL 8/9, Debian 12, or Ubuntu 22.04, install from the Pigsty repository or build from source.
 
-Simply run the Docker container as shown below:
+### From `.deb` Package
 
-```bash
-docker run \
-  --name vchord-suite \
-  -e POSTGRES_PASSWORD=postgres \
-  -p 5432:5432 \
-  -d tensorchord/vchord-suite:pg18-latest
-  # If you want to use ghcr image, you can change the image to `ghcr.io/tensorchord/vchord-suite:pg18-latest`.
-  # if you want to use the specific version, you can use the tag `pg17-20250414`, supported version can be found in the support matrix.
-```
-
-Once everything’s set up, you can connect to the database using the `psql` command line tool. The default username is `postgres`, and the default password is `postgres`. Here’s how to connect:
+1. Download the matching `.deb` for your PostgreSQL major version and CPU architecture, then install it:
 
 ```sh
-psql -h localhost -p 5432 -U postgres
+sudo apt install ./postgresql-18-pg-tokenizer_1.2.0-1_amd64.deb
 ```
 
-After connecting, run the following SQL to make sure the extension is enabled:
-
-```sql
-CREATE EXTENSION pg_tokenizer;
-```
-
-## From Debian package
-
-Use the `.deb` built for the exact distribution, PostgreSQL major version, and CPU architecture of the target host. GitHub 1.1.0 release packages are built on Ubuntu 24.04; use the Pigsty repository for native packages targeting other distributions. Dependency metadata and the target distribution determine compatibility. Do not infer compatibility from a generic GLIBC version floor.
-
-Debian packages (`.deb`) are used in distributions based on Debian, such as Ubuntu and many others. They can be installed by `dpkg` or `apt-get`.
-
-1. Download the matching deb package from the [1.1.0 release page](https://github.com/pgsty/pg_tokenizer/releases/tag/v1.1.0). For PostgreSQL 17 on Ubuntu 24.04 amd64, run `sudo apt install ./postgresql-17-pg-tokenizer_1.1.0-1_amd64.deb`.
-
-2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
+2. Configure `shared_preload_libraries` (and optionally `search_path`), then restart PostgreSQL:
 
 ```sh
-psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
+psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer';"
 psql -U postgres -c "ALTER SYSTEM SET search_path TO \"\$user\", public, tokenizer_catalog;"
-# You need restart the PostgreSQL cluster to take effects.
-sudo systemctl restart postgresql.service   # for pg_tokenizer running with systemd
+sudo systemctl restart postgresql.service
 ```
 
-3. Connect to the database and enable the extension.
+3. Enable the extension in each target database:
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS pg_tokenizer;
 ```
 
-## From ZIP package
+### From `.zip` Archive
 
-ZIP archives contain the extension library and SQL/control files without package-manager dependency metadata. Use an archive with the matching PostgreSQL major version and CPU architecture, and verify that the shared library is compatible with the target system's libc before installing. For supported EL, Debian, or Ubuntu systems, prefer the matching native RPM or `.deb` package.
-
-For systems without a matching native package that cannot run a Docker container, follow these steps to install:
-
-1. Install PostgreSQL, its development tools, `unzip`, and `wget`. The following example uses Ubuntu 24.04 with the PostgreSQL Apt repository configured and PostgreSQL 17, matching the ZIP selected below. Put that major version's tools first in `PATH`.
+1. Download and extract the matching `.zip` archive for your PostgreSQL major version and architecture:
 
 ```sh
-sudo apt-get update
-sudo apt-get install -y postgresql-17 postgresql-server-dev-17 unzip wget
-export PATH="/usr/lib/postgresql/17/bin:$PATH"
-```
-
-2. Locate PostgreSQL's library and shared-data directories.
-
-```sh
-pg_config --pkglibdir
-# Print something similar to:
-# /usr/lib/postgresql/17/lib or
-# /usr/lib64/pgsql
-
-pg_config --sharedir
-# Print something similar to:
-# /usr/share/postgresql/17 or
-# /usr/share/pgsql
-```
-
-3. Download the matching ZIP package from the [1.1.0 release page](https://github.com/pgsty/pg_tokenizer/releases/tag/v1.1.0) and extract it to a temporary directory. This example targets PostgreSQL 17 on x86_64:
-
-```sh
-wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.1.0/postgresql-17-pg-tokenizer_1.1.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
+wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.2.0/postgresql-18-pg-tokenizer_1.2.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
 unzip pg_tokenizer.zip -d pg_tokenizer
 ```
 
-4. Install the extension files into the PostgreSQL directories.
+2. Install the shared library and extension SQL/control files using `install` (which replaces files atomically without truncating a library mapped by a running server):
 
 ```sh
-# Install library into `$pkglibdir`
 sudo install -m 755 pg_tokenizer/pg_tokenizer.so "$(pg_config --pkglibdir)/"
-# Install schema and control files into `$sharedir`
 sudo install -m 644 pg_tokenizer/pg_tokenizer--*.sql pg_tokenizer/pg_tokenizer.control "$(pg_config --sharedir)/extension/"
 ```
 
-Use `install` to replace the library without truncating a file that PostgreSQL may already have loaded. Restart PostgreSQL afterward to load the installed library.
-
-5. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
-
-```sh
-psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
-psql -U postgres -c "ALTER SYSTEM SET search_path TO \"\$user\", public, tokenizer_catalog;"
-# You need restart the PostgreSQL cluster to take effects.
-sudo systemctl restart postgresql.service   # for pg_tokenizer running with systemd
-```
-
-6. Connect to the database and enable the extension.
-
-```sql
-CREATE EXTENSION IF NOT EXISTS pg_tokenizer;
-```
-
+3. Configure `shared_preload_libraries`, restart PostgreSQL, and run `CREATE EXTENSION IF NOT EXISTS pg_tokenizer;`.
 
 ## From Source
 
-Before building from source, you could refer to the [development](02-development.md) guide to set up the development environment.
-
-1. In the cloned repository, select the release tag, then build and install the extension for the PostgreSQL installation selected by `pg_config`.
+Building from source requires Rust 1.99.1+, Python 3.11+, PostgreSQL 15–19 development headers, and matching Clang, libclang, and LLVM tools (see [development](02-development.md)).
 
 ```sh
-cargo pgrx install --sudo --release --pg-config "$(command -v pg_config)" --features lindera-ipadic
+cargo install cargo-pgrx --version 0.20.0 --locked
+git clone https://github.com/pgsty/pg_tokenizer.git
+cd pg_tokenizer
+PG_CONFIG=/path/to/pg_config make build
+sudo make PG_CONFIG=/path/to/pg_config install
 ```
 
-2. Configure your PostgreSQL by modifying the `shared_preload_libraries` and `search_path` to include the extension.
-
-```sh
-psql -U postgres -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_tokenizer.so';"
-psql -U postgres -c "ALTER SYSTEM SET search_path TO \"\$user\", public, tokenizer_catalog;"
-# You need restart the PostgreSQL cluster to take effects.
-sudo systemctl restart postgresql.service   # for pg_tokenizer running with systemd
-```
-
-3. Connect to the database and enable the extension.
-
-```sql
-CREATE EXTENSION pg_tokenizer;
-```
+`FEATURES` defaults to `lindera-ipadic`; pass `FEATURES="..."` to `make build` to embed other Lindera dictionaries (`lindera-ipadic-neologd`, `lindera-unidic`, `lindera-ko-dic`, `lindera-cc-cedict`). After installing, add `pg_tokenizer` to `shared_preload_libraries`, restart PostgreSQL, and create the extension.
 
 ## Upgrading
 
-For an existing 1.1.0 installation, install the new library and SQL files, restart PostgreSQL, and run:
+### Upgrading from 1.1.0 to 1.2.0
+
+1. Ensure PostgreSQL is on version 15–19 (`pgrx 0.20.0` drops PostgreSQL 14 support; upgrade PostgreSQL 14 clusters first).
+2. Install the `1.2.0` shared library and SQL files on the primary and all replicas, then restart PostgreSQL on each node.
+3. Update the extension in each database:
 
 ```sql
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
 
-The 1.1.0 → 1.2.0 upgrade preserves catalog data, tokenizer definitions, and token IDs. Update and restart replicas with the matching library as well.
+The `1.1.0 → 1.2.0` update preserves all SQL signatures, catalog definitions, `tokenizer_data` custom vocabularies, and token IDs. No re-tokenization or reindexing is required.
 
-### Upgrading from versions before 1.1.0
+### Upgrading from 1.0.0 or 0.1.x
 
+`pg_tokenizer` ships the full migration chain `0.1.0 → 0.1.1 → 1.0.0 → 1.1.0 → 1.2.0`.
 
-Upgrade acceptance is outside this release's scope. In particular, existing per-schema default privileges and transactions retaining a snapshot across an upgrade need separate validation before an upgrade is used in production.
+When upgrading across `1.0.0 → 1.1.0`:
 
-After installing the 1.1.0 library and SQL files, restart PostgreSQL to load the new preloaded library, then update each database as the extension owner or an administrator. Run the update at `READ COMMITTED`:
+1. **Pre-upgrade checks**:
+   - Schema-qualify any unqualified `pg_dict` dictionary names that exist in multiple schemas (including custom dictionaries that share a `pg_catalog` built-in name).
+   - Ensure no unrelated `tokenizer_data` schema exists in the database, and run as a superuser if custom models are owned by multiple roles.
+   - Review the [`pg_tokenizer.*` analysis budgets](07-limitation.md#cancellation-and-resource-use) if your workload processes documents larger than 16 MiB.
+2. **Run under `READ COMMITTED`**:
+   The `1.0.0 → 1.1.0` migration moves `tokenizer_catalog.model_<name>` tables into `tokenizer_data` and rejects `REPEATABLE READ` and `SERIALIZABLE` (SQLSTATE `25000`) so concurrent model creation cannot be missed:
 
 ```sql
 BEGIN ISOLATION LEVEL READ COMMITTED;
-ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0';
+ALTER EXTENSION pg_tokenizer UPDATE;
 COMMIT;
 ```
 
-The `1.0.0 → 1.1.0` script refuses `REPEATABLE READ` and `SERIALIZABLE` with SQLSTATE `25000`, including when they come from `default_transaction_isolation`. At those levels every statement of the script reuses the snapshot taken before it waits for the model catalog lock, so a custom model committed during that wait would be left behind in the old schema. An explicit `READ COMMITTED` transaction, as above, is enough. Replace the installed library without truncating the existing file, for example with the `install` commands in the ZIP instructions; never overwrite a library that the running server has preloaded in place.
+Key behavior changes across earlier major steps:
+- **Vocabulary schema (`1.1.0`)**: Registered `model_<name>` tables, indexes, and identity sequences move from `tokenizer_catalog` to `tokenizer_data` via `ALTER TABLE ... SET SCHEMA`, preserving OIDs, owners, ACLs, token IDs, and views. Update any direct SQL queries that referenced `tokenizer_catalog.model_<name>`.
+- **Jieba modes & long custom tokens (`1.1.0`)**: Versions `1.0.0` and earlier swapped Jieba's `full` and `precise` modes (`search` was unaffected) and could drop custom-model tokens longer than 2600 bytes. Recompute stored outputs and rebuild dependent indexes if affected.
+- **`apply_text_analyzer` volatility (`1.0.0`)**: `apply_text_analyzer` changed from `IMMUTABLE` to `STABLE` in `1.0.0`. Drop any expression indexes, stored generated columns, partition keys, or extended statistics referencing `apply_text_analyzer` before upgrading from `0.1.x`.
+- **Lindera 6.2 (`1.0.0`)**: Embedded IPADIC updated from `2007-08-01` to `2025-09-20`, external dictionaries must be compiled with Lindera 6, and user-dictionary token IDs start at `1073741824`. Recompute stored Lindera token arrays and rebuild indexes when upgrading from `0.1.x`.
+- **Reserved stopword lists (`1.0.0`)**: Built-in names (`lucene_english`, `nltk_english`, `iso_english`) cannot be dropped or overwritten.
 
-The direct upgrade is `1.0.0 → 1.1.0`; older 0.1.0 and 0.1.1 installations use the existing chain through 1.0.0. There is no published 1.0.1 release or migration step. It preserves catalog data, existing custom-model token IDs, and dependencies on the six-argument helper (including its function OID). Standard `cargo pgrx install/package` and `tools/package.sh` include the migration scripts. After the new library is loaded, committed definition changes invalidate backend-local caches; each lookup respects its SQL snapshot, and objects loaded from an older snapshot are discarded before a later statement or transaction reuses them.
+## Database-Owner Permissions
 
-1.1.0 adds a transactional version table and definition triggers, corrects all catalog writers to `PARALLEL UNSAFE`, and pins legacy `pg_dict` names. Resolve missing or ambiguous legacy names before upgrading. A custom dictionary sharing a builtin name is ambiguous too; explicitly choose its schema or `pg_catalog`. SQL signatures and custom vocabulary IDs are preserved. New input/output budgets can reject previously accepted large documents with SQLSTATE `54000`; review [the defaults and remaining library limits](07-limitation.md#cancellation-and-resource-use) before upgrading a bulk ingestion workload. Deploy the matching library to every replica and restart it as well. The old primary-only cache path remains active until the SQL upgrade has committed and replayed.
+Installation and upgrade create two schemas and grant database-local management rights to `pg_database_owner`:
+- `tokenizer_catalog`: `USAGE` on the schema, `EXECUTE` on database-local functions, `SELECT, INSERT, UPDATE, DELETE` on catalog tables, and `USAGE, SELECT` on sequences (`PUBLIC` has no catalog write access).
+- `tokenizer_data`: `USAGE, CREATE` on the schema, plus `SELECT, INSERT, UPDATE, DELETE` on custom vocabulary tables and `USAGE, SELECT` on their identity sequences.
 
-The `full` and `precise` Jieba modes were swapped in 1.0.0 and earlier. Regenerate persisted output produced with either mode and rebuild dependent indexes after upgrading; the default `search` mode is unchanged.
+A non-superuser database owner can create and drop its own analyzers, tokenizers, stopwords, synonyms, and custom models after an administrator installs the extension. Dropping a custom model created by another role still requires that table's owner or a superuser. Other application roles require explicit `GRANT` statements.
 
-### Runtime vocabulary migration
-
-The upgrade moves registered `tokenizer_catalog.model_<name>` tables, their indexes and owned identity sequences into the extension-owned `tokenizer_data` schema. It uses `ALTER TABLE ... SET SCHEMA`, preserving OIDs, owners, table/sequence ACLs, token IDs, views and trigger dependencies. Existing nonowner schema USAGE/CREATE grants and grant options are copied to the data schema; CREATE is revoked from the catalog schema. Direct SQL that names an old vocabulary table must use `tokenizer_data.model_<name>` afterward. Function calls still use `tokenizer_catalog`; no data-schema search_path entry is required.
-
-An unrelated existing `tokenizer_data` schema, a missing registered vocabulary table or an object-name collision aborts the entire upgrade. Resolve the conflicting object explicitly and retry. Do not drop or rename application objects blindly. The upgrader must be able to alter every registered vocabulary table; if models have different owners, use a superuser. The upgrade locks the model catalog and vocabulary tables; finish long-running model-management transactions first. A statement whose snapshot predates the upgrade may receive SQLSTATE `40001`; retry its transaction with a new snapshot. The new library supports 1.0.0 SQL until the migration commits.
-
-### Database-owner permissions
-
-Installation and upgrade grant `pg_database_owner` USAGE on `tokenizer_catalog`, USAGE/CREATE on `tokenizer_data`, EXECUTE on database-local management functions, SELECT/INSERT/UPDATE/DELETE on catalog and vocabulary tables, and USAGE/SELECT on their sequences. Newly created custom models explicitly grant table/sequence access. The grants follow a database ownership change. Nonowner CREATE grants are removed from `tokenizer_catalog`; PostgreSQL schema owners and roles with their privileges retain inherent owner powers.
-
-A non-superuser database owner can create/drop its own custom models, analyzers, tokenizers, stopwords, and synonyms after an administrator installs the extension. Grants do not transfer table ownership: dropping a model created by a different role still needs that object's owner or an administrator. Other application roles require explicit grants; the extension does not give PUBLIC schema access or catalog write privileges. Public API functions continue to execute with the caller's privileges. The internal version trigger is SECURITY DEFINER, uses a fixed search_path, and only increments its protected counter; PUBLIC receives SELECT on that counter.
-
-Lindera dictionaries can be files on the database server. Only superusers and roles with the privileges of `pg_read_server_files` (directly or through inherited membership) may load a Lindera model whose `segmenter.dictionary` or `segmenter.user_dictionary` is a filesystem path or `file://` URI; other roles, including non-superuser database owners, can use `embedded://` dictionaries. The check runs on every load: at `create_lindera_model` and whenever a backend first loads the model from the catalog, including rows written directly to `tokenizer_catalog.model`. An object already loaded in a backend, and a model preloaded by the postmaster whose catalog definition matches, remain usable by every role. Therefore an existing model with an external dictionary now fails with SQLSTATE `42501` for an unprivileged role whose session would load it; grant `pg_read_server_files` to that role or preload the model with `add_preload_model`. Lindera's own error details (which can quote file names and contents) are reported only to roles allowed to read server files.
-
-The cluster-wide `add_preload_model` and `remove_preload_model` functions are restricted to the extension owner and explicitly authorized administrators. `PUBLIC` and `pg_database_owner` have no EXECUTE grant on these two functions. Changes to preload files are not transactional and take effect on restart. Broken preload entries now generate WARNING messages and are skipped; repair or remove the entry before expecting that model to be preloaded.
-
-### Compatibility changes in 1.0.0
-
-- `apply_text_analyzer` is now `STABLE`, like `tokenize`: analyzer definitions are catalog data, so `IMMUTABLE` was incorrect and allowed cached plans to bypass invalidation. The upgrade refuses to run while an index, stored generated column, partition key, or extended statistics object depends on it. Replace such expressions with ordinary columns maintained by the application or a trigger, index those columns, then upgrade.
-- Lindera moves from 0.42 to 6.2. The embedded IPADIC dictionary changes from the 2007-08-01 edition to the 2025-09-20 edition, so its token IDs change; external compiled dictionaries must be rebuilt with Lindera 6. User-dictionary IDs now use `1073741824 + dictionary-local ID` instead of overlapping system-dictionary IDs. Regenerate stored Lindera token arrays and rebuild their indexes; see the [model notes](06-model.md#lindera-model).
-- A matching custom-model row with a NULL source now gets a NULL embedding, including a value supplied explicitly by the INSERT; 0.1.x left the target column unchanged. Nonmatching filtered rows retain their embedding.
-- Vocabulary writers that add tokens to a custom model serialize on a per-model advisory lock until commit; writers whose tokens already exist do not wait. `REPEATABLE READ` and `SERIALIZABLE` writers can receive SQLSTATE `40001` and must retry.
-- `PREPARE TRANSACTION` is rejected after calling a definition-changing API. Read-only use can be prepared.
-- `add_preload_model` and `remove_preload_model` are restricted to administrators, and broken preload entries are skipped with a WARNING instead of preventing startup. Before upgrading, remove preload entries for Lindera models that use external dictionaries not yet rebuilt with Lindera 6.
-- The built-in `lucene_english`, `nltk_english`, and `iso_english` stopword lists are reserved: `drop_stopwords` and `create_stopwords` refuse these names. If an earlier version replaced one of them, the upgrade prints a WARNING; copy the list to a new name and reference that name instead.
-- `pg_dump` now includes the definition tables; see [logical backups](07-limitation.md#logical-backups).
+- **Lindera server files**: Loading a Lindera `dictionary` or `user_dictionary` from a server filesystem path or `file://` URI requires superuser or `pg_read_server_files` privileges on every backend load. Unprivileged roles can use `embedded://` dictionaries or reuse a model preloaded by the postmaster whose catalog configuration matches.
+- **Cluster preload list**: `add_preload_model` and `remove_preload_model` write to `$PGDATA/pg_tokenizer/preload_models` across the cluster and are restricted to the extension owner and administrators. Changes take effect on PostgreSQL restart; unreadable or invalid preload entries log a `WARNING` and are skipped.

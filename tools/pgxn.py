@@ -38,9 +38,14 @@ def metadata(read):
 
 def pg_paths(pg_config):
     info = {key: capture(pg_config, "--" + key) for key in ("version", "pkglibdir", "sharedir")}
-    major = int(info["version"].split()[1].split(".")[0])
+    match = re.match(r"^PostgreSQL (\d+)", info["version"])
+    if not match:
+        raise ValueError(f"Cannot parse PostgreSQL version from {info['version']!r}")
+    major = int(match.group(1))
     if major not in range(15, 20):
-        raise ValueError("This release supports PostgreSQL 15 through 19")
+        raise ValueError(
+            f"Unsupported PostgreSQL major version {major}; this release supports PostgreSQL 15 through 19"
+        )
     return info
 
 

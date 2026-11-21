@@ -569,7 +569,13 @@ class IntegrationTests(unittest.TestCase):
         original = self.db.execute(
             "SELECT id, token FROM model_race ORDER BY id"
         ).fetchall()
-        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.1.0'")
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE")
+        self.assertEqual(
+            self.db.execute(
+                "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
+            ).fetchone()[0],
+            "1.2.0",
+        )
         self.assertEqual(
             self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(),
             original,
@@ -661,11 +667,18 @@ class IntegrationTests(unittest.TestCase):
             )
         self.db.execute("INSERT INTO race(body) VALUES ('gamma alpha')")
         self.assert_embeddings(self.db)
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE")
+        self.assertEqual(
+            self.db.execute(
+                "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
+            ).fetchone()[0],
+            "1.2.0",
+        )
         # All supported old versions have an upgrade path in standard pgrx packages.
         path = self.db.execute(
-            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.1.0'"
+            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.2.0'"
         ).fetchone()[0]
-        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.1.0")
+        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.1.0--1.2.0")
 
         # A fresh installation and an upgraded installation must expose the same
         # function signatures, defaults, volatility, language and implementation.
@@ -707,7 +720,7 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute(
             "SELECT create_tokenizer('churn_tokenizer', 'text_analyzer = \"churn_analyzer\"\nmodel = \"bert_base_uncased\"')"
         )
-        stop = time.monotonic() + 3
+        stop = time.monotonic() + 1.5
 
         def churn():
             with self.connect() as conn:
@@ -885,7 +898,7 @@ class IntegrationTests(unittest.TestCase):
         with self.connect() as a, self.connect() as b:
             a.execute("BEGIN")
             a.execute("INSERT INTO race(body) VALUES ('gamma')")
-            b.execute("SET lock_timeout = '1s'")
+            b.execute("SET lock_timeout = '250ms'")
             b.execute("INSERT INTO race(body) VALUES ('beta alpha')")
             with self.assertRaises(psycopg.errors.LockNotAvailable):
                 b.execute("INSERT INTO race(body) VALUES ('delta')")
@@ -944,41 +957,110 @@ class IntegrationTests(unittest.TestCase):
 
     def test_read_committed_refreshes_after_long_statement(self):
         self.db.execute("SELECT create_tokenizer('slow_snapshot', 'model = \"bert_base_uncased\"')")
+        gate_key = 945001
         with self.connect() as reader:
             reader.execute("BEGIN")
             # pgrx select() otherwise silently takes fresh snapshots after an
             # XID is assigned. Definitions must still use this statement's snapshot.
             reader.execute("CREATE TEMP TABLE snapshot_write (n integer)")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    lambda: reader.execute(
-                        "WITH slept AS MATERIALIZED (SELECT pg_sleep(2)) "
-                        "SELECT tokenize('hello', 'slow_snapshot') FROM slept; "
-                        "SELECT tokenize('hello', 'slow_snapshot')"
+            self.db.execute("SELECT pg_advisory_lock(%s)", (gate_key,))
+            locked = True
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        lambda: reader.execute(
+                            f"WITH gate AS MATERIALIZED (SELECT pg_advisory_lock_shared({gate_key}), pg_advisory_unlock_shared({gate_key})) "
+                            "SELECT tokenize('hello', 'slow_snapshot') FROM gate; "
+                            "SELECT tokenize('hello', 'slow_snapshot')"
+                        )
                     )
-                )
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline:
-                    wait = self.db.execute(
-                        "SELECT wait_event FROM pg_stat_activity WHERE pid = %s",
-                        (reader.info.backend_pid,),
-                    ).fetchone()[0]
-                    if wait == "PgSleep":
-                        break
-                    time.sleep(0.01)
-                self.assertEqual(wait, "PgSleep")
-                with self.db.transaction():
-                    self.db.execute("SELECT drop_tokenizer('slow_snapshot')")
-                    self.db.execute("SELECT create_tokenizer('slow_snapshot', 'model = \"llmlingua2\"')")
-                expected = self.db.execute("SELECT tokenize('hello', 'slow_snapshot')").fetchone()[0]
-                result = future.result(timeout=10)
-                self.assertNotEqual(result.fetchone()[0], expected)
-                self.assertTrue(result.nextset())
-                self.assertEqual(result.fetchone()[0], expected)
+                    deadline = time.monotonic() + 10
+                    wait = None
+                    while time.monotonic() < deadline:
+                        wait = self.db.execute(
+                            "SELECT wait_event FROM pg_stat_activity WHERE pid = %s",
+                            (reader.info.backend_pid,),
+                        ).fetchone()[0]
+                        if wait == "advisory" or future.done():
+                            break
+                        time.sleep(0.01)
+                    self.assertEqual(wait, "advisory")
+                    with self.db.transaction():
+                        self.db.execute("SELECT drop_tokenizer('slow_snapshot')")
+                        self.db.execute("SELECT create_tokenizer('slow_snapshot', 'model = \"llmlingua2\"')")
+                    expected = self.db.execute("SELECT tokenize('hello', 'slow_snapshot')").fetchone()[0]
+                    self.db.execute("SELECT pg_advisory_unlock(%s)", (gate_key,))
+                    locked = False
+                    result = future.result(timeout=10)
+                    self.assertNotEqual(result.fetchone()[0], expected)
+                    self.assertTrue(result.nextset())
+                    self.assertEqual(result.fetchone()[0], expected)
+            finally:
+                if locked:
+                    self.db.execute("SELECT pg_advisory_unlock(%s)", (gate_key,))
             # A new READ COMMITTED statement has a new snapshot, even before COMMIT.
             self.assertEqual(reader.execute("SELECT tokenize('hello', 'slow_snapshot')").fetchone()[0], expected)
             reader.execute("COMMIT")
             self.assertEqual(reader.execute("SELECT tokenize('hello', 'slow_snapshot')").fetchone()[0], expected)
+
+    def test_trigger_assignment_errors_cleanup_cleanly(self):
+        self.db.execute("SELECT create_text_analyzer('cassert_words', 'pre_tokenizer = \"unicode_segmentation\"')")
+        self.db.execute("CREATE DOMAIN cassert_short_ids AS int[] NOT NULL CHECK (cardinality(VALUE) <= 2)")
+        self.db.execute("""
+            CREATE TABLE cassert_target (
+                id int,
+                body text,
+                bounded varchar(7),
+                checked cassert_short_ids,
+                invalid point
+            )
+        """)
+        self.db.execute("""
+            SELECT create_custom_model_tokenizer_and_trigger(
+                'cassert_tok', 'cassert_model', 'cassert_words', 'cassert_target', 'body', 'bounded'
+            )
+        """)
+        # Name triggers after model_cassert_model_trigger so vocabulary rows exist first.
+        self.db.execute("""
+            CREATE TRIGGER z_cassert_checked_trigger
+            BEFORE INSERT OR UPDATE OF body ON cassert_target FOR EACH ROW
+            EXECUTE FUNCTION custom_model_tokenizer_set_target_column_trigger('cassert_tok', 'body', 'checked')
+        """)
+        with self.connect() as conn:
+            conn.execute("INSERT INTO cassert_target (id, body, checked) VALUES (1, 'a', '{1}')")
+            # Exercise top-level autocommit errors (varchar length, domain CHECK, domain NOT NULL).
+            for body, error in [
+                ("a b c d", psycopg.errors.StringDataRightTruncation),
+                ("a a a", psycopg.errors.CheckViolation),
+                (None, psycopg.errors.NotNullViolation),
+            ]:
+                with self.assertRaises(error):
+                    conn.execute("INSERT INTO cassert_target (id, body, checked) VALUES (2, %s, '{1}')", (body,))
+            conn.execute("""
+                DO $$
+                BEGIN
+                    FOR i IN 1..5 LOOP
+                        BEGIN
+                            INSERT INTO cassert_target (id, body, checked) VALUES (10 + i, 'a b c d', '{1}');
+                        EXCEPTION WHEN string_data_right_truncation OR check_violation THEN
+                            NULL;
+                        END;
+                    END LOOP;
+                END $$
+            """)
+            conn.execute("INSERT INTO cassert_target (id, body, checked) VALUES (3, 'b', '{1}')")
+            rows = conn.execute(
+                "SELECT id, bounded = tokenize(body, 'cassert_tok')::text, checked = tokenize(body, 'cassert_tok') "
+                "FROM cassert_target ORDER BY id"
+            ).fetchall()
+            self.assertEqual(rows, [(1, True, True), (3, True, True)])
+            conn.execute("""
+                CREATE TRIGGER z_cassert_invalid_trigger
+                BEFORE INSERT ON cassert_target FOR EACH ROW
+                EXECUTE FUNCTION custom_model_tokenizer_set_target_column_trigger('cassert_tok', 'body', 'invalid')
+            """)
+            with self.assertRaises(psycopg.errors.DatatypeMismatch):
+                conn.execute("INSERT INTO cassert_target (id, body, checked) VALUES (4, 'a', '{1}')")
 
     def test_upgrade_hardens_privileges_and_volatility(self):
         self.make_model(self.db)

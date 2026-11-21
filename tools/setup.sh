@@ -3,13 +3,13 @@ set -xeu
 
 version=$1
 
-sudo apt-get update
+sudo apt-get -o Acquire::Retries=3 update
 sudo apt-get remove -y '^postgres.*' '^libpq.*'
 sudo apt-get purge -y '^postgres.*' '^libpq.*'
-sudo apt-get install -y postgresql-common
+sudo apt-get -o Acquire::Retries=3 install -y postgresql-common
 sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
-sudo apt-get install -y postgresql-server-dev-${version}
-sudo apt-get install -y postgresql-${version} python3-venv zip dpkg-dev clang-18 libclang-18-dev llvm-18
+sudo apt-get -o Acquire::Retries=3 install -y postgresql-server-dev-${version}
+sudo apt-get -o Acquire::Retries=3 install -y postgresql-${version} python3-venv zip dpkg-dev clang-18 libclang-18-dev llvm-18
 
 export CC=clang-18 CLANG_PATH=/usr/bin/clang-18 LIBCLANG_PATH=/usr/lib/llvm-18/lib CLANG_NO_DEFAULT_CONFIG=1
 if [ -n "${GITHUB_ENV:-}" ]; then
@@ -31,4 +31,4 @@ PGRX_VERSION=$(grep -o 'pgrx = "=[^"]*' Cargo.toml | cut -d = -f 3)
 RUSTFLAGS="" cargo install --locked cargo-pgrx --version "$PGRX_VERSION"
 cargo pgrx init --pg${version}=$(which pg_config)
 
-curl -fsSL https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.26.4/sqllogictest-bin-v0.26.4-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - ./sqllogictest | install -m 755 /dev/stdin /usr/local/bin/sqllogictest
+curl -fsSL --retry 3 --retry-all-errors https://github.com/risinglightdb/sqllogictest-rs/releases/download/v0.26.4/sqllogictest-bin-v0.26.4-$(uname -m)-unknown-linux-musl.tar.gz | tar -xOzf - ./sqllogictest | sudo install -m 755 /dev/stdin /usr/local/bin/sqllogictest

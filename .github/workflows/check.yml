@@ -18,7 +18,7 @@ env:
 
 jobs:
   style:
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-24.04"
 
     steps:
       - name: Checkout
@@ -41,7 +41,7 @@ jobs:
         uses: crate-ci/typos@master
       - name: Taplo
         run: |
-          curl -fsSL "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-$(uname -m).gz" | gzip -d - | install -m 755 /dev/stdin /usr/local/bin/taplo
+          curl -fsSL --retry 3 --retry-all-errors "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-$(uname -m).gz" | gzip -d - | sudo install -m 755 /dev/stdin /usr/local/bin/taplo
           taplo fmt --check
       - name: Rustfmt
         run: cargo fmt --check
@@ -81,6 +81,8 @@ jobs:
         run: cargo test --locked --no-fail-fast --features "pg${{ matrix.version }} lindera-ipadic"
       - name: Install
         run: cargo pgrx install --features "pg${{ matrix.version }} lindera-ipadic" --release --sudo
+      - name: Verify symbols and install SQL
+        run: python3 tools/check_install.py
       - name: Integration Test
         run: |
           sudo systemctl start postgresql
@@ -97,3 +99,9 @@ jobs:
         run: timeout 120 /tmp/tokenizer-tests/bin/python tests/test_preload.py
       - name: Physical standby, snapshots, promotion, and crash recovery
         run: timeout 120 /tmp/tokenizer-tests/bin/python tests/test_standby.py
+      - name: Server log check
+        run: |
+          ! sudo grep -nE 'TRAP:|PANIC:|terminated by signal|was not closed|reference leak|refcount leak|not owned by resource owner|after release started' "/var/log/postgresql/postgresql-${{ matrix.version }}-main.log"
+      - name: PostgreSQL server log
+        if: always()
+        run: sudo cat "/var/log/postgresql/postgresql-${{ matrix.version }}-main.log"

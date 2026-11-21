@@ -1,6 +1,6 @@
-"""Unit tests for tools/pgxn.py. They need no PostgreSQL, Rust or network.
+"""Unit tests for tools/pgxn.py and tools/check_install.py.
 
-Run with: python3 tests/test_pgxn.py
+They need no PostgreSQL, Rust or network. Run with: python3 tests/test_pgxn.py
 """
 
 import argparse
@@ -14,12 +14,49 @@ import tempfile
 import unittest
 from unittest import mock
 
-TOOLS = Path(__file__).resolve().parent.parent / "tools" / "pgxn.py"
-spec = importlib.util.spec_from_file_location("pgxn", TOOLS)
-pgxn = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(pgxn)
+TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 
-PATHS = {"version": "PostgreSQL 18.0", "pkglibdir": "/lib", "sharedir": "/share"}
+
+def load_tool(name):
+    spec = importlib.util.spec_from_file_location(name, TOOLS_DIR / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+pgxn = load_tool("pgxn")
+check_install = load_tool("check_install")
+
+PATHS = {"version": "PostgreSQL 19.0", "pkglibdir": "/lib", "sharedir": "/share"}
+
+
+class PgPathsTests(unittest.TestCase):
+    def check_version(self, version_string):
+        values = {"--version": version_string, "--pkglibdir": "/lib", "--sharedir": "/share"}
+        with mock.patch.object(pgxn, "capture", side_effect=lambda _, flag: values[flag]):
+            return pgxn.pg_paths("pg_config")
+
+    def test_accepts_stable_and_prerelease_pg15_to_pg19(self):
+        for version in (
+            "PostgreSQL 15.20",
+            "PostgreSQL 16.16 (Debian 16.16-1.pgdg120+1)",
+            "PostgreSQL 18.6 (Homebrew)",
+            "PostgreSQL 19.0",
+            "PostgreSQL 19rc1",
+            "PostgreSQL 19beta2 (Ubuntu 19~beta2-1.pgdg24.04+1)",
+        ):
+            with self.subTest(version=version):
+                self.assertEqual(self.check_version(version)["version"], version)
+
+    def test_rejects_unsupported_and_malformed_versions(self):
+        for version in ("PostgreSQL 14.20", "PostgreSQL 20devel", "PostgreSQL 20.0"):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "supports PostgreSQL 15 through 19"):
+                    self.check_version(version)
+        for version in ("PostgreSQL ", "PostgreSQL rc1", "19.0"):
+            with self.subTest(version=version):
+                with self.assertRaisesRegex(ValueError, "Cannot parse PostgreSQL version"):
+                    self.check_version(version)
 
 
 class InstallTests(unittest.TestCase):
@@ -30,7 +67,7 @@ class InstallTests(unittest.TestCase):
         self.build = self.root / "build"
         self.dest = self.root / "dest"
         patches = [
-            mock.patch.object(pgxn, "metadata", return_value=("1.1.0", "{}")),
+            mock.patch.object(pgxn, "metadata", return_value=("1.2.0", "{}")),
             mock.patch.object(pgxn, "pg_paths", return_value=PATHS),
             mock.patch.object(pgxn, "capture", return_value="cargo-pgrx 0.20.0"),
         ]
@@ -44,8 +81,12 @@ class InstallTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
             path.chmod(0o755 if name.endswith(".so") else 0o644)
-        manifest = {"version": "1.1.0", "paths": PATHS, "package": package,
-                    "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()}}
+        manifest = {
+            "version": "1.2.0",
+            "paths": PATHS,
+            "package": package,
+            "files": {name: hashlib.sha256(content).hexdigest() for name, content in files.items()},
+        }
         (self.build / "manifest.json").write_text(json.dumps(manifest))
 
     def install(self):
@@ -96,13 +137,13 @@ class InstallTests(unittest.TestCase):
             out = Path(argv[argv.index("--out-dir") + 1])
             extension = out / PATHS["sharedir"].lstrip("/") / "extension"
             extension.mkdir(parents=True)
-            (extension / "pg_tokenizer.control").write_text("default_version = '1.1.0'\n")
+            (extension / "pg_tokenizer.control").write_text("default_version = '1.2.0'\n")
             library = out / PATHS["pkglibdir"].lstrip("/") / "pg_tokenizer.so"
             library.parent.mkdir(parents=True)
             library.write_bytes(b"new build")
 
         cwd = os.getcwd()
-        os.chdir(TOOLS.parent.parent)  # build() copies sql/upgrade from the source tree
+        os.chdir(TOOLS_DIR.parent)  # build() copies sql/upgrade from the source tree
         self.addCleanup(os.chdir, cwd)
         with mock.patch.object(pgxn.subprocess, "run", side_effect=package):
             pgxn.build(self.build_args())
@@ -110,8 +151,52 @@ class InstallTests(unittest.TestCase):
         self.assertNotEqual(manifest["package"], "package-test")
         self.assertFalse((self.build / "package-test").exists())
         self.assertIn("share/extension/pg_tokenizer--1.0.0--1.1.0.sql", manifest["files"])
+        self.assertIn("share/extension/pg_tokenizer--1.1.0--1.2.0.sql", manifest["files"])
         self.install()
         self.assertEqual((self.dest / "lib/pg_tokenizer.so").read_bytes(), b"new build")
+
+
+class CheckInstallTests(unittest.TestCase):
+    @staticmethod
+    def wrap(*bodies):
+        return "\n\n".join(
+            f"/* <begin connected objects> */\n{body}\n/* </end connected objects> */"
+            for body in bodies
+        ) + "\n"
+
+    def test_schema_verification_handles_block_reordering_and_catches_drift(self):
+        expected = self.wrap(
+            "/* header */",
+            "-- src/a.rs:10\nCREATE FUNCTION a() RETURNS void LANGUAGE sql AS 'SELECT 1';",
+            "-- src/b.rs:20\nCREATE TABLE b (id int);",
+            "-- src/lib.rs:79\n-- finalize\nGRANT USAGE ON SCHEMA s TO PUBLIC;",
+        )
+        reordered = self.wrap(
+            "/* header */",
+            "-- src/b.rs:99\nCREATE TABLE b (id int);",
+            "-- src/a.rs:42\nCREATE FUNCTION a() RETURNS void LANGUAGE sql AS 'SELECT 1';",
+            "-- src/lib.rs:85\n-- finalize\nGRANT USAGE ON SCHEMA s TO PUBLIC;",
+        )
+        check_install.verify_schema_sql(expected, reordered)
+        drifted = reordered.replace("RETURNS void", "RETURNS int")
+        with self.assertRaisesRegex(ValueError, "Install SQL drift"):
+            check_install.verify_schema_sql(expected, drifted)
+        bad_finalize = self.wrap(
+            "/* header */",
+            "-- finalize\nGRANT USAGE ON SCHEMA s TO PUBLIC;",
+            "CREATE TABLE b (id int);",
+        )
+        with self.assertRaisesRegex(ValueError, "Finalize SQL block mismatch"):
+            check_install.verify_schema_sql(expected, bad_finalize)
+
+    def test_referenced_symbols_scan_install_and_upgrade_scripts(self):
+        root = TOOLS_DIR.parent
+        files = sorted((root / "sql/install").glob("pg_tokenizer--*.sql")) + sorted(
+            (root / "sql/upgrade").glob("pg_tokenizer--*--*.sql")
+        )
+        symbols = check_install.referenced_symbols(files)
+        self.assertIn("tokenize_wrapper", symbols)
+        self.assertIn("custom_model_tokenizer_set_target_column_trigger_wrapper", symbols)
 
 
 if __name__ == "__main__":
