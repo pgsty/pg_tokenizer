@@ -15,6 +15,11 @@ mkdir -p ./build/zip
 cp ./target/schema.sql ./build/zip/pg_tokenizer--$SEMVER.sql
 sed -e "s/@CARGO_VERSION@/$SEMVER/g" <./pg_tokenizer.control >./build/zip/pg_tokenizer.control
 cp ./target/release/libpg_tokenizer.so ./build/zip/pg_tokenizer.so
+ipadic_manifest=$(cargo metadata --locked --format-version 1 --filter-platform "$(rustc --print host-tuple)" \
+  --features "pg${VERSION} lindera-ipadic" | python3 -c 'import json, sys
+manifest, = (pkg["manifest_path"] for pkg in json.load(sys.stdin)["packages"] if pkg["name"] == "lindera-ipadic")
+print(manifest)')
+install -m 644 "$(dirname "$ipadic_manifest")/NOTICE.txt" ./build/zip/IPADIC-NOTICE.txt
 zip ./build/postgresql-${VERSION}-pg-tokenizer_${SEMVER}_${ARCH}-linux-gnu.zip -j ./build/zip/*
 
 mkdir -p ./build/deb
@@ -24,6 +29,7 @@ mkdir -p ./build/deb/usr/lib/postgresql/$VERSION/lib/
 mkdir -p ./build/deb/usr/share/doc/postgresql-$VERSION-pg-tokenizer/
 cp ./build/zip/*.sql ./build/zip/*.control ./build/deb/usr/share/postgresql/$VERSION/extension/
 cp ./build/zip/*.so ./build/deb/usr/lib/postgresql/$VERSION/lib/
+cp ./build/zip/IPADIC-NOTICE.txt ./build/deb/usr/share/doc/postgresql-$VERSION-pg-tokenizer/
 # Derive runtime dependencies from the actual ELF, including libstdc++.
 mkdir -p ./build/debian
 printf 'Source: pg-tokenizer\n\nPackage: postgresql-%s-pg-tokenizer\nArchitecture: any\nDescription: PostgreSQL tokenizer\n' "$VERSION" > ./build/debian/control

@@ -115,6 +115,8 @@ jobs:
           for file in build/zip/*; do
             if [[ "$file" == *.so ]]; then
               cmp "$file" "$(pg_config --pkglibdir)/$(basename "$file")"
+            elif [[ "$file" == */IPADIC-NOTICE.txt ]]; then
+              cmp "$file" "/usr/share/doc/postgresql-${VERSION}-pg-tokenizer/IPADIC-NOTICE.txt"
             else
               cmp "$file" "$(pg_config --sharedir)/extension/$(basename "$file")"
             fi

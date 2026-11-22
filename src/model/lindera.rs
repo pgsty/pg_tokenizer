@@ -9,8 +9,8 @@
 use std::sync::Arc;
 
 use anyhow::Context;
+use lindera::analysis::tokenizer::{Tokenizer, TokenizerConfig};
 use lindera::dictionary::{DictionaryKind, WordId};
-use lindera_analysis::tokenizer::{Tokenizer, TokenizerConfig};
 use pgrx::pg_sys::errcodes::PgSqlErrorCode;
 use pgrx::pg_sys::{self};
 use serde::{Deserialize, Serialize};
@@ -66,9 +66,7 @@ impl LinderaConfig {
     }
 }
 
-// The values Lindera opens when it builds a tokenizer from a normalized
-// configuration: the system dictionary and the optional user dictionary.
-// Lindera ignores a non-string value for either key, and so does this check.
+// Lindera reads the system and optional user dictionary locations as strings.
 fn dictionary_sources(config: &TokenizerConfig) -> impl Iterator<Item = &str> {
     let segmenter = config.get("segmenter");
     ["dictionary", "user_dictionary"]
@@ -76,9 +74,8 @@ fn dictionary_sources(config: &TokenizerConfig) -> impl Iterator<Item = &str> {
         .filter_map(move |key| segmenter?.get(key)?.as_str())
 }
 
-// Only an `embedded://` URI is served from the library itself. Lindera treats
-// every other value (a plain path, a `file://` URI, or anything it cannot
-// parse) as a file to open, so this deliberately does not try to parse URIs.
+// Lindera opens plain paths and file:// URIs. Only a literal embedded://
+// source is passed through for roles without server-file privileges.
 fn reads_server_files(config: &TokenizerConfig) -> bool {
     dictionary_sources(config).any(|source| !source.starts_with("embedded://"))
 }
@@ -235,6 +232,7 @@ mod tests {
 
     // Unit tests run without a PostgreSQL backend, so they build models
     // without the backend authorization check.
+    #[cfg(feature = "lindera-ipadic")]
     fn build(config: &LinderaConfig) -> LinderaModel {
         LinderaModel::build(&config.tokenizer_config().unwrap()).unwrap()
     }
@@ -249,12 +247,13 @@ mod tests {
     #[test]
     fn embedded_dictionaries_do_not_read_server_files() {
         assert!(!reads_files(json!({"dictionary": "embedded://ipadic"})));
+        #[cfg(feature = "lindera-ipadic")]
         assert!(!reads_files(json!({"dictionary": {"kind": "ipadic"}})));
         assert!(!reads_files(json!({
             "dictionary": "embedded://ipadic",
             "user_dictionary": "embedded://ipadic"
         })));
-        // Lindera ignores non-string values, so they open nothing.
+        // Non-string values do not name files.
         assert!(!reads_files(
             json!({"dictionary": 1, "user_dictionary": []})
         ));
@@ -271,6 +270,7 @@ mod tests {
             json!({"dictionary": {"path": "/etc", "memmap": true}}),
             json!({"dictionary": "embedded://ipadic", "user_dictionary": "/data/user.csv"}),
             json!({"dictionary": "embedded://ipadic", "user_dictionary": "file:///data/user.csv"}),
+            #[cfg(feature = "lindera-ipadic")]
             json!({"dictionary": {"kind": "ipadic"}, "user_dictionary": {"path": "/data/user.csv"}}),
             // Not parsed as embedded URIs: refuse rather than guess.
             json!({"dictionary": "EMBEDDED://ipadic"}),
@@ -362,7 +362,13 @@ mod tests {
 
     #[test]
     fn invalid_legacy_dictionary_config_is_rejected() {
-        for dictionary in [json!({}), json!({"kind": 1}), json!({"kind": "invalid"})] {
+        for dictionary in [
+            json!({}),
+            json!({"kind": 1}),
+            json!({"kind": "invalid"}),
+            #[cfg(not(feature = "lindera-ipadic"))]
+            json!({"kind": "ipadic"}),
+        ] {
             let config = LinderaConfig {
                 inner: json!({"segmenter": {"dictionary": dictionary}}),
             };

@@ -83,9 +83,9 @@ class PreloadTests(unittest.TestCase):
         (self.preload / "bad_utf8").write_bytes(b"\xff")
         (self.preload / "broken_json").write_text('{"hugging_face":')
         (self.preload / "llmlingua2").write_text("invalid built-in marker")
-        (self.preload / "legacy_dictionary").write_text(json.dumps({
-            "lindera": {"segmenter": {"dictionary": {"path": str(self.root / "missing-dictionary")}}}
-        }))
+        old_dictionary = Path(__file__).resolve().parent / "fixtures/lindera-v2"
+        old_config = json.dumps({"lindera": {"segmenter": {"dictionary": {"path": str(old_dictionary)}}}})
+        (self.preload / "legacy_dictionary").write_text(old_config)
         (self.preload / "unreadable_entry").mkdir()
         (self.preload / "linked_model").symlink_to(self.preload / "broken_json")
         os.mkfifo(self.preload / "named_pipe")
@@ -107,6 +107,10 @@ class PreloadTests(unittest.TestCase):
         with self.connect() as conn:
             conn.execute("CREATE EXTENSION pg_tokenizer")
             self.assertEqual(self.listed(conn), ["bad_utf8", "broken_json", "legacy_dictionary", "llmlingua2", "too_large"])
+            conn.execute("INSERT INTO tokenizer_catalog.model(name, config) VALUES ('legacy_dictionary', %s)", (old_config,))
+            with self.assertRaises(psycopg.errors.InvalidParameterValue) as refused:
+                conn.execute("SELECT tokenizer_catalog.create_tokenizer('legacy_dictionary', 'model=\"legacy_dictionary\"')")
+            self.assertRegex(refused.exception.diag.message_detail, r"format version 2.*format version 3")
             self.create_model(conn, "shared_model", 11)
             conn.execute("SELECT tokenizer_catalog.add_preload_model('shared_model')")
             conn.execute("CREATE DATABASE other_database")

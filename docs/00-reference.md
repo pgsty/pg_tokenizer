@@ -32,7 +32,7 @@
 
 <br/>
 
-- `tokenizer_catalog.create_lindera_model(name TEXT, config TEXT)`: Create a Lindera model. Lindera 6 dictionary URIs and legacy dictionary tables are supported; see [Lindera model configuration and upgrade notes](06-model.md#lindera-model).
+- `tokenizer_catalog.create_lindera_model(name TEXT, config TEXT)` creates a Lindera model. It accepts dictionary URIs and legacy dictionary tables. External system dictionaries require Lindera 7 format v3. See [Lindera model configuration](06-model.md#lindera-model).
 - `tokenizer_catalog.drop_lindera_model(name TEXT)`: Drop a lindera model.
 
 <br/>
@@ -154,4 +154,4 @@ Lengths count Unicode characters, not bytes. A token shorter than `min_gram` pro
 
 ### Options for `lindera model`
 
-It's totally the same as lindera tokenizer configs, see [Lindera](https://github.com/lindera/lindera).
+Use a Lindera 7 tokenizer configuration. The extension also accepts legacy dictionary tables and checks server-file privileges when loading dictionaries. See [Lindera model configuration](06-model.md#lindera-model).

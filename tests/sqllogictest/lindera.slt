@@ -104,11 +104,15 @@ SELECT tokenizer_catalog.tokenize('関西国際空港限定トートバッグ', 
 ----
 {372982,374178}
 
-# Lindera 6 unknown-word IDs are lexicon-local numbers, not u32::MAX.
 query T
-SELECT tokenizer_catalog.tokenize('トートバッグ', 'lindera_legacy');
+SELECT tokenizer_catalog.tokenize(sample, 'lindera_legacy')
+FROM (VALUES (1, 'トートバッグ'), (2, 'Google が 新しい'), (3, '龘々'), (4, U&'\3000')) AS examples(ord, sample)
+ORDER BY ord;
 ----
 {}
+{19679,236490}
+{103}
+{98}
 
 statement ok
 SELECT tokenizer_catalog.drop_tokenizer('lindera_legacy');

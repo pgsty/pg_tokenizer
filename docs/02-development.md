@@ -30,6 +30,8 @@ PG_CONFIG=/path/to/pg_config make build
 sudo make PG_CONFIG=/path/to/pg_config install
 ```
 
+For embedded IPADIC, Lindera 7 downloads its published dictionary and verifies the SHA-256 pinned in the `lindera-ipadic` crate. Set `LINDERA_BUILD_DICTIONARY_CACHE_DIR` to reuse the dictionary across builds. The former `LINDERA_DICTIONARIES_PATH` variable was removed in Lindera 7.
+
 To build with the minimum supported Rust version under rustup, set `RUSTUP_TOOLCHAIN=1.99.1` for the build command.
 
 > Do not set `--no-gc-sections` in global `RUSTFLAGS` or Cargo config: `cargo-pgrx 0.20.0` handles schema-section retention for the `cdylib` target directly, while global `--no-gc-sections` breaks standalone Rust unit-test linking.

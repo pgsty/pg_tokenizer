@@ -28,11 +28,11 @@ SELECT create_huggingface_model('bert_import', :'content');
 
 We support importing models using [lindera](https://github.com/lindera/lindera) config. You can use the `create_lindera_model` function to import a model.
 
-Lindera 6.2 uses dictionary URIs such as `embedded://ipadic`, or filesystem paths for external dictionaries. Existing `[segmenter.dictionary] kind = "ipadic"` configurations in the catalog and preload files remain supported. Legacy dictionary `path` and user-dictionary `path` tables are also accepted; external compiled dictionaries must be rebuilt with Lindera 6.
+Lindera 7 accepts `embedded://ipadic` and paths to external system dictionaries. The extension also accepts `[segmenter.dictionary] kind = "ipadic"`, legacy dictionary `path` tables, and user-dictionary `path` tables in catalog rows and preload files. Rebuild external system dictionaries with Lindera 7 or download a matching format-v3 directory. User dictionaries can be CSV or binary and must use context IDs valid for the chosen system dictionary.
 
 Dictionary paths and `file://` URIs, for both `dictionary` and `user_dictionary`, read files on the database server as the PostgreSQL operating-system user. Creating or loading such a model requires a superuser or a role with the privileges of `pg_read_server_files`; other roles get `permission denied to load a Lindera dictionary from a file` and can use `embedded://` dictionaries. The check applies whenever a backend loads the model, including the first use of an existing catalog row in a new session, so a role without that privilege can use an external-dictionary model only when it is preloaded or already loaded in its backend. See [database-owner permissions](01-installation.md#database-owner-permissions).
 
-The embedded IPADIC dictionary changes from the 2007-08-01 edition to the 2025-09-20 edition. Its token IDs differ from those produced by Lindera 0.42. After upgrading, regenerate stored Lindera token arrays and rebuild any indexes that consume them before mixing them with new query tokens. Unknown words continue to be omitted from the token IDs.
+Versions 1.0.0 and 1.1.0 used Lindera 6.2 with the 2025-09-20 IPADIC source, replacing the 2007-08-01 edition used by `0.1.x`. Version 1.2.0 uses the same IPADIC source with Lindera 7's dictionary builder and segmentation rules. Word selection can change around whitespace, punctuation, and unknown characters. It can also change when the spelling stays the same. In `掌の上`, IPADIC now selects the reading `テノヒラ` for `掌` (ID `230578`), previously `タナゴコロ` (ID `230579`). Unknown tokens are omitted and user dictionary IDs start at `1073741824`. See the [upgrade guide](01-installation.md#upgrading-from-110-to-120).
 
 ```sql
 SELECT tokenizer_catalog.create_lindera_model('lindera_ipadic', $$
@@ -103,7 +103,7 @@ kind = "remove_diacritical_mark"
 $$);
 ```
 
-The GitHub Release packages built by this repository include the IPADIC dictionary, matching the CI test configuration. Other package providers may enable different dictionaries. For source builds, select the dictionaries with `lindera-ipadic`, `lindera-ipadic-neologd`, `lindera-unidic`, `lindera-ko-dic`, or `lindera-cc-cedict`; they are not enabled by default. See [installation](01-installation.md) for more details.
+The Makefile and GitHub release workflow embed IPADIC. Direct Cargo builds embed a dictionary only when its feature is selected. The available features are `lindera-ipadic`, `lindera-ipadic-neologd`, `lindera-unidic`, `lindera-ko-dic`, and `lindera-cc-cedict`. Other package providers may select different features. See [installation](01-installation.md).
 
 ```sh
 cargo pgrx install --sudo --release --features "lindera-ipadic lindera-ipadic-neologd lindera-unidic lindera-ko-dic lindera-cc-cedict"

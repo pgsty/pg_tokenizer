@@ -77,7 +77,7 @@ PG_CONFIG=/path/to/pg_config make build
 sudo make PG_CONFIG=/path/to/pg_config install
 ```
 
-The Makefile enables `lindera-ipadic`. Other dictionaries are optional Cargo features; external dictionaries must be compiled with Lindera 6. Set `CLANG_PATH` and `LIBCLANG_PATH` if multiple LLVM versions are installed, and `CLANG_NO_DEFAULT_CONFIG=1` if Clang loads a default configuration file.
+The Makefile embeds IPADIC. Other dictionaries are optional Cargo features. External system dictionaries must use Lindera 7 format v3. Set `CLANG_PATH` and `LIBCLANG_PATH` if multiple LLVM versions are installed, and `CLANG_NO_DEFAULT_CONFIG=1` if Clang loads a default configuration file.
 
 ## Upgrading
 
@@ -87,7 +87,7 @@ Install the new library and SQL files, restart PostgreSQL on the primary and all
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
 
-Upgrading from `1.1.0` to `1.2.0` preserves catalog definitions, vocabulary IDs, and valid preload files. Changes to regex matching and the Rust compiler's Unicode tables can affect stored tokens. If you use symlinks for the preload directory or its entries, migrate them to regular directories and files before restart. See the [upgrade guide](docs/01-installation.md#upgrading).
+Upgrading from `1.1.0` to `1.2.0` preserves catalog definitions, custom vocabulary IDs, and the preload file format. Replace external Lindera system dictionaries on every node before restarting with 1.2.0. Lindera segmentation, regex matching, and updated Unicode tables can change tokens for stored documents and queries. Migrate preload symlinks to real directories and regular files before restart. See the [upgrade guide](docs/01-installation.md#upgrading).
 
 ## Testing
 

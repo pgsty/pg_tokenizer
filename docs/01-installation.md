@@ -14,7 +14,7 @@ pig repo add pgsql -u
 pig ext add pg_tokenizer
 ```
 
-Pigsty RPM and DEB packages omit embedded Lindera dictionaries to keep package sizes small; provide external dictionaries compiled with Lindera 6 when using Lindera models. GitHub Release `.deb` and `.zip` packages enable `lindera-ipadic` with embedded IPADIC.
+Pigsty RPM and DEB packages omit embedded Lindera dictionaries to keep package sizes small. For `pg_tokenizer` 1.2.0, provide external system dictionaries built with Lindera 7 (format v3). The GitHub release workflow enables `lindera-ipadic` to embed IPADIC in its `.deb` and `.zip` packages.
 
 ## GitHub Release Packages (`.deb` and `.zip`)
 
@@ -58,6 +58,7 @@ unzip pg_tokenizer.zip -d pg_tokenizer
 ```sh
 sudo install -m 755 pg_tokenizer/pg_tokenizer.so "$(pg_config --pkglibdir)/"
 sudo install -m 644 pg_tokenizer/pg_tokenizer--*.sql pg_tokenizer/pg_tokenizer.control "$(pg_config --sharedir)/extension/"
+sudo install -Dm 644 pg_tokenizer/IPADIC-NOTICE.txt "$(pg_config --docdir)/pg_tokenizer/IPADIC-NOTICE.txt"
 ```
 
 3. Configure `shared_preload_libraries`, restart PostgreSQL, and run `CREATE EXTENSION IF NOT EXISTS pg_tokenizer;`.
@@ -81,21 +82,23 @@ sudo make PG_CONFIG=/path/to/pg_config install
 ### Upgrading from 1.1.0 to 1.2.0
 
 1. Ensure PostgreSQL is on version 15–19 (`pgrx 0.20.0` drops PostgreSQL 14 support; upgrade PostgreSQL 14 clusters first).
-2. Install the `1.2.0` shared library and SQL files on the primary and all replicas, then restart PostgreSQL on each node.
-3. Update the extension in each database:
+2. If any model uses an **external Lindera system dictionary**, stage a format-v3 directory built or downloaded with Lindera 7.0.0 on every node that serves the model. Keep the v2 directory for rollback. With PostgreSQL stopped, move the new directory into the configured path. Embedded dictionaries ship with the library. Existing user dictionary `.csv` and `.bin` files can be reused with a compatible system dictionary.
+3. Install the `1.2.0` shared library and SQL files on the primary and all replicas, then restart PostgreSQL on each node.
+4. Update the extension in each database:
 
 ```sql
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
 
-The `1.1.0 → 1.2.0` update preserves SQL signatures, catalog definitions, and the IDs assigned to terms in `tokenizer_data` vocabularies. Embedded IPADIC and the external Lindera 6 dictionary format are the same in both versions.
+The `1.1.0 → 1.2.0` update preserves SQL signatures, catalog definitions, and the IDs assigned to terms in `tokenizer_data` vocabularies. If an external dictionary is still v2, startup skips its preload entry with a warning. A privileged backend load then reports SQLSTATE `22023` with the expected dictionary format. Install the v3 directory at the same path and restart to restore preloading. Existing catalog rows and preload configuration files can be reused.
 
-Two changes can affect the tokens produced from the same text.
+Three changes can affect the tokens produced from the same text.
 
+- Lindera 7 changes segmentation and dictionary lookup, including with embedded IPADIC. For the default IPADIC model, `Google が 新しい` changes from `{19678,236490}` to `{19679,236490}`, and `龘々` changes from `{}` to `{103}`. `関西国際空港限定` still returns `{372982,374178}`.
 - `regex` 1.13.2 corrects match boundaries when alternatives start with the same variable-length expression. For example, the pre-tokenizer pattern `id[0-9]*[0-9]|id[0-9]*-` applied to `id42-` now returns `id42`. Version 1.1.0 returned `id42-`.
 - Rust 1.100.0 supplies Unicode 18.0 tables for `to_lowercase` and `skip_non_alphanumeric`. Rust 1.99.1 uses Unicode 17.0. For example, a build with Rust 1.100.0 lowercases U+A7DD to U+0277 and retains U+A7DD as a single alphanumeric token. A build with Rust 1.99.1 leaves its case unchanged and drops that single-character token in the filter.
 
-Use the same compiler version when building for nodes that share data. For analyzers using these patterns or affected Unicode characters, compare representative outputs across the upgrade. Where tokens differ, reprocess the source text through the ingestion pipeline. With `create_custom_model_tokenizer_and_trigger`, updating the source column on an affected row reruns both triggers, adding new terms to the vocabulary before recomputing the embedding. PostgreSQL updates indexes on the stored arrays or vectors as those rows are rewritten.
+Use the same compiler and dictionary build on nodes that share data. Compare document and query tokens across the upgrade for pipelines that use Lindera, these regex patterns, or affected Unicode characters. Where tokens differ, regenerate stored token arrays and `tsvector` values from the source text before serving queries with the new tokenizer. With `create_custom_model_tokenizer_and_trigger`, updating the source column on an affected row reruns both triggers, adding new terms to the vocabulary before recomputing the embedding. PostgreSQL updates indexes on the stored arrays or vectors as those rows are rewritten.
 
 Valid preload files from earlier versions work in place. Each node reads `$PGDATA/pg_tokenizer/preload_models` at startup. If either directory component or a model entry is a symlink, move its intended contents into real directories and regular files before restart.
 
@@ -124,7 +127,7 @@ Key behavior changes across earlier major steps:
 - **Vocabulary schema (`1.1.0`)**: Registered `model_<name>` tables, indexes, and identity sequences move from `tokenizer_catalog` to `tokenizer_data` via `ALTER TABLE ... SET SCHEMA`, preserving OIDs, owners, ACLs, token IDs, and views. Update any direct SQL queries that referenced `tokenizer_catalog.model_<name>`.
 - **Jieba modes & long custom tokens (`1.1.0`)**: Versions `1.0.0` and earlier swapped Jieba's `full` and `precise` modes (`search` was unaffected) and could drop custom-model tokens longer than 2600 bytes. Recompute stored outputs and rebuild dependent indexes if affected.
 - **`apply_text_analyzer` volatility (`1.0.0`)**: `apply_text_analyzer` changed from `IMMUTABLE` to `STABLE` in `1.0.0`. Drop any expression indexes, stored generated columns, partition keys, or extended statistics referencing `apply_text_analyzer` before upgrading from `0.1.x`.
-- **Lindera 6.2 (`1.0.0`)**: Embedded IPADIC updated from `2007-08-01` to `2025-09-20`, external dictionaries must be compiled with Lindera 6, and user-dictionary token IDs start at `1073741824`. Recompute stored Lindera token arrays and rebuild indexes when upgrading from `0.1.x`.
+- **Lindera 6.2 (`1.0.0`)** switched embedded IPADIC from the `2007-08-01` to the `2025-09-20` edition and moved user dictionary IDs to a separate range starting at `1073741824`. When upgrading from `0.1.x` through to `1.2.0`, install format-v3 external system dictionaries for the target version and regenerate stored Lindera tokens from the source text.
 - **Reserved stopword lists (`1.0.0`)**: Built-in names (`lucene_english`, `nltk_english`, `iso_english`) cannot be dropped or overwritten.
 
 ## Database-Owner Permissions

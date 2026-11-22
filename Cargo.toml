@@ -14,11 +14,11 @@ pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
 pg18 = ["pgrx/pg18", "pgrx-tests/pg18"]
 pg19 = ["pgrx/pg19", "pgrx-tests/pg19"]
 pg_test = []
-lindera-ipadic = ["lindera-analysis/embed-ipadic"]
-lindera-ipadic-neologd = ["lindera-analysis/embed-ipadic-neologd"]
-lindera-unidic = ["lindera-analysis/embed-unidic"]
-lindera-ko-dic = ["lindera-analysis/embed-ko-dic"]
-lindera-cc-cedict = ["lindera-analysis/embed-cc-cedict"]
+lindera-ipadic = ["lindera/embed-ipadic"]
+lindera-ipadic-neologd = ["lindera/embed-ipadic-neologd"]
+lindera-unidic = ["lindera/embed-unidic"]
+lindera-ko-dic = ["lindera/embed-ko-dic"]
+lindera-cc-cedict = ["lindera/embed-cc-cedict"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -26,8 +26,7 @@ cap-fs-ext = "4.0.3"
 cap-std = "4.0.3"
 dashmap = "6.2.1"
 jieba-rs = "0.11.0"
-lindera = "6.2.0"
-lindera-analysis = "6.2.0"
+lindera = "7.0.0"
 pgrx = "=0.20.0"
 regex = "1.13.2"
 rust-stemmers = { git = "https://github.com/pgsty/rust-stemmers.git", tag = "v1.2.1" }
@@ -38,7 +37,7 @@ tokenizers = "0.23.2"
 toml = "1.2.2"
 unicode-normalization = "0.1.26"
 unicode-segmentation = "1.13.3"
-uuid = { version = "1.29.0", features = ["v4"] }
+uuid = { version = "1.29.3", features = ["v4"] }
 validator = { version = "0.21.0", features = ["derive"] }
 
 [dev-dependencies]
