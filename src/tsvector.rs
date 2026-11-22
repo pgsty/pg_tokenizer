@@ -14,7 +14,7 @@ const MAX_LEXEME_BYTES: usize = 2046;
 // A tsvector keeps at most 256 positions per lexeme (MAXNUMPOS), and positions
 // are at most 16383 (MAXENTRYPOS - 1); larger positions are clamped.
 const MAX_POSITIONS: usize = 256;
-const MAX_POSITION: usize = 16383;
+const MAX_POSITION: u16 = 16383;
 
 // Let PostgreSQL build and validate the native datum. Escaping the tsvector
 // input syntax keeps punctuation, whitespace and subword markers intact.
@@ -25,19 +25,21 @@ const MAX_POSITION: usize = 16383;
 // Later tokens are still read, so a new lexeme after position 16383 is kept.
 #[pgrx::pg_extern(immutable, parallel_safe)]
 fn _tokens_to_tsvector_text(tokens: Vec<String>) -> String {
-    let mut lexemes: Vec<(String, Vec<usize>)> = Vec::new();
+    let mut lexemes: Vec<(String, Vec<u16>)> = Vec::new();
     let mut slots: HashMap<String, usize> = HashMap::new();
-    let mut position = 0;
+    let mut position = 0u16;
+    let mut estimated_bytes = 0usize;
     for (i, token) in tokens.into_iter().enumerate() {
         crate::utils::check_for_interrupts_every(i);
         // Like to_tsvector, skip words PostgreSQL cannot store as a lexeme.
         if token.is_empty() || token.len() > MAX_LEXEME_BYTES {
             continue;
         }
-        position = (position + 1).min(MAX_POSITION);
+        position = position.saturating_add(1).min(MAX_POSITION);
         let slot = match slots.get(&token) {
             Some(&slot) => slot,
             None => {
+                estimated_bytes = estimated_bytes.saturating_add(token.len() + 4);
                 slots.insert(token.clone(), lexemes.len());
                 lexemes.push((token, Vec::new()));
                 lexemes.len() - 1
@@ -48,9 +50,10 @@ fn _tokens_to_tsvector_text(tokens: Vec<String>) -> String {
         let positions = &mut lexemes[slot].1;
         if positions.len() < MAX_POSITIONS && positions.last() != Some(&MAX_POSITION) {
             positions.push(position);
+            estimated_bytes = estimated_bytes.saturating_add(6);
         }
     }
-    let mut result = String::new();
+    let mut result = String::with_capacity(estimated_bytes);
     for (lexeme, positions) in lexemes {
         result.push('\'');
         for ch in lexeme.chars() {

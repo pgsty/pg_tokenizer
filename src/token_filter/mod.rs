@@ -89,14 +89,56 @@ pub(crate) fn clear_caches() {
 #[cfg(test)]
 mod tests {
     use super::skip_non_alphanumeric::SkipNonAlphanumeric;
+    use super::stopwords::StopwordsTokenFilter;
+    use super::synonym::SynonymTokenFilter;
     use super::TokenFilter;
     use crate::utils::interrupt_tests::count_interrupt_checks;
+
+    struct IdentityFilter;
+    impl TokenFilter for IdentityFilter {
+        fn apply(&self, token: String) -> Vec<String> {
+            vec![token]
+        }
+    }
 
     #[test]
     fn default_batch_checks_for_interrupts_per_token() {
         let tokens = vec!["a".to_string(); 3000];
-        let (result, checks) = count_interrupt_checks(|| SkipNonAlphanumeric.apply_batch(tokens));
+        let (result, checks) = count_interrupt_checks(|| IdentityFilter.apply_batch(tokens));
         assert_eq!(result.len(), 3000);
         assert_eq!(checks, 3000);
+    }
+
+    #[test]
+    fn in_place_filters_preserve_output_and_interrupt_checks() {
+        let (kept, checks) = count_interrupt_checks(|| {
+            SkipNonAlphanumeric.apply_batch(vec![
+                "hello".into(),
+                "---".into(),
+                "世界".into(),
+                "!".into(),
+            ])
+        });
+        assert_eq!(kept, ["hello", "世界"]);
+        assert_eq!(checks, 4);
+
+        let stopwords = StopwordsTokenFilter::build("the\nand\n");
+        let (kept, checks) = count_interrupt_checks(|| {
+            stopwords.apply_batch(vec![
+                "the".into(),
+                "quick".into(),
+                "and".into(),
+                "fox".into(),
+            ])
+        });
+        assert_eq!(kept, ["quick", "fox"]);
+        assert_eq!(checks, 4);
+
+        let synonyms = SynonymTokenFilter::build("pg postgres postgresql\n");
+        let (mapped, checks) = count_interrupt_checks(|| {
+            synonyms.apply_batch(vec!["postgresql".into(), "db".into(), "postgres".into()])
+        });
+        assert_eq!(mapped, ["pg", "db", "pg"]);
+        assert_eq!(checks, 3);
     }
 }

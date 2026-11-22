@@ -101,6 +101,7 @@ jobs:
         run: timeout 120 /tmp/tokenizer-tests/bin/python tests/test_standby.py
       - name: Server log check
         run: |
+          sudo test -s "/var/log/postgresql/postgresql-${{ matrix.version }}-main.log"
           ! sudo grep -nE 'TRAP:|PANIC:|terminated by signal|was not closed|reference leak|refcount leak|not owned by resource owner|after release started' "/var/log/postgresql/postgresql-${{ matrix.version }}-main.log"
       - name: PostgreSQL server log
         if: always()

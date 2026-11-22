@@ -57,6 +57,20 @@ impl TokenFilter for SynonymTokenFilter {
             vec![token]
         }
     }
+
+    fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
+        let mut budget = crate::budget::Output::default();
+        for token in tokens.iter_mut() {
+            crate::utils::check_for_interrupts();
+            if let Some(synonym) = self.synonyms.get(token.as_str()) {
+                budget.text(synonym.len());
+                token.clone_from(synonym);
+            } else {
+                budget.text(token.len());
+            }
+        }
+        tokens
+    }
 }
 
 pgrx::extension_sql!(

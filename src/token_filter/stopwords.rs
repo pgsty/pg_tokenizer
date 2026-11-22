@@ -44,6 +44,14 @@ impl TokenFilter for StopwordsTokenFilter {
             vec![token]
         }
     }
+
+    fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
+        tokens.retain(|token| {
+            crate::utils::check_for_interrupts();
+            !self.stopwords.contains(token.as_str())
+        });
+        tokens
+    }
 }
 
 pgrx::extension_sql!(

@@ -18,4 +18,12 @@ impl TokenFilter for SkipNonAlphanumeric {
             vec![]
         }
     }
+
+    fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
+        tokens.retain(|token| {
+            crate::utils::check_for_interrupts();
+            token.chars().any(char::is_alphanumeric)
+        });
+        tokens
+    }
 }

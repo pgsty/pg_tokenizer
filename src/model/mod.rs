@@ -180,12 +180,19 @@ pub fn add_preload_model(name: &str) {
     validate_model_name(name).unwrap();
     get_model(name);
 
-    let path = std::path::Path::new("pg_tokenizer/preload_models").join(name);
-    if is_builtin_model(name) {
-        std::fs::write(&path, "").unwrap();
+    let dir_path = std::path::Path::new("pg_tokenizer/preload_models");
+    if let Err(e) = std::fs::create_dir_all(dir_path) {
+        pgrx::error!("Failed to create preload directory: {}", e);
+    }
+    let path = dir_path.join(name);
+    let content = if is_builtin_model(name) {
+        String::new()
     } else {
         let config = get_model_config(name).unwrap();
-        std::fs::write(&path, serde_json::to_string(&config).unwrap()).unwrap();
+        serde_json::to_string(&config).unwrap()
+    };
+    if let Err(e) = std::fs::write(&path, content) {
+        pgrx::error!("Failed to save preload model: {}", e);
     }
 }
 
@@ -207,9 +214,14 @@ pub fn remove_preload_model(name: &str) {
 #[pgrx::pg_extern(volatile, parallel_unsafe)]
 pub fn list_preload_models() -> Vec<String> {
     let dir_path = std::path::Path::new("pg_tokenizer/preload_models");
+    let entries = match std::fs::read_dir(dir_path) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => pgrx::error!("Failed to read preload directory: {}", e),
+    };
     let mut models = Vec::new();
-    for entry in std::fs::read_dir(dir_path).unwrap() {
-        let entry = entry.unwrap();
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| pgrx::error!("Failed to read preload entry: {}", e));
         let name = entry.file_name().into_string().unwrap();
         models.push(name);
     }
