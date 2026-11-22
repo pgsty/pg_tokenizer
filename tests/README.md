@@ -30,8 +30,7 @@ PG_TOKENIZER_TEST_DSN='host=localhost user=postgres dbname=postgres' \
 
    Set `PG_TOKENIZER_TEST_LINDERA_DICTIONARY=/path/to/ipadic` when testing packages built without `--features lindera-ipadic`.
 
-3. **Preload recovery and database isolation** (`tests/test_preload.py`):
-   Creates and tears down its own private cluster using `pg_config` from `PATH`:
+3. **Preload recovery and database isolation** (`tests/test_preload.py`). Uses private clusters to exercise concurrent writers and readers, interrupted or malformed entries, symlinks, directory creation, permissions, and cross-database model reuse. It uses `pg_config` from `PATH`. On PG18+, `PG_TOKENIZER_TEST_LIBRARY` and `PG_TOKENIZER_TEST_SHAREDIR` can select a staged installation.
 
 ```shell
 .venv/bin/python tests/test_preload.py

@@ -269,20 +269,19 @@ UPDATE documents SET embedding = tokenize(passage, 'tokenizer1');
 
 ## Preload model
 
-For each connection, Postgresql will load the model at the first time you use it. This may cause a delay for the first query. You can use the `add_preload_model` function to preload the model at the server startup.
+Each backend loads a model on first use. To share it across backends, add it from the database containing its definition and restart PostgreSQL. A catalog model can reuse the inherited object when its name and exact stored configuration match in that database.
 
-```sh
-psql -c "SELECT add_preload_model('model1')"
-# restart the PostgreSQL to take effects
-sudo docker restart container_name         # for pg_tokenizer running with docker
-sudo systemctl restart postgresql.service  # for pg_tokenizer running with systemd
+```sql
+SELECT tokenizer_catalog.add_preload_model('model1');
+SELECT tokenizer_catalog.list_preload_models();
 ```
 
-The default preload model is `llmlingua2`. You can change it by using `add_preload_model`, `remove_preload_model` functions.
+PostgreSQL seeds `llmlingua2` when it first creates the preload directory. To start with an empty list, remove the last model with `tokenizer_catalog.remove_preload_model(name)` and leave the directory in place. Preloading `gemma2b` uses roughly 100 MB and `llmlingua2` roughly 200 MB.
 
-Note: The pre-trained model may take a lot of memory (100MB for gemma2b, 200MB for llmlingua2). If you have a lot of models, you should consider the memory usage when you preload the model.
+The cluster stores one file per model under `$PGDATA/pg_tokenizer/preload_models`. Its filename is the original, case-sensitive model name, matching `[A-Za-z][A-Za-z0-9_]{0,19}`. Names differing only in case require a case-sensitive filesystem to coexist. Built-ins use an empty regular file. Other entries contain the model configuration as UTF-8 JSON. These are the same formats used by 1.0.0 and 1.1.0.
 
+`add_preload_model` publishes a complete file by atomic rename. Concurrent adds and removes for one name take effect in filesystem order across all databases. Rolling back the SQL transaction leaves the file change in effect. Both functions require the owner's privileges or an explicit `EXECUTE` grant. `list_preload_models()` reads the directory, so it shows configured names, including files whose contents failed to load. Use the startup log to diagnose those entries.
 
-Preloading is cluster-wide and its management functions require the extension owner's privileges or an explicit administrator grant. Backend cache invalidation preserves the inherited preload objects. A non-built-in preload is reused only when the current database has the same model name and exact stored configuration; it cannot substitute for a missing or different local definition. Preload failure logs a WARNING and skips that entry instead of preventing PostgreSQL startup. Preload-list file changes are not rolled back by SQL transaction rollback.
+Both directory components must be real directories. Startup skips symlinks, special files, invalid filenames and damaged model configurations with a warning. To repair an entry, call `add_preload_model(name)` using the intended definition and restart. Back up preload files separately and configure each standby that needs them.
 
 Starting in 1.0.0, Lindera user-dictionary token IDs occupy a separate range beginning at `1073741824`, so they no longer overlap system-dictionary IDs. Re-tokenize persisted values and rebuild consuming indexes when using a user dictionary.

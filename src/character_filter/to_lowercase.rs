@@ -14,12 +14,24 @@ pub struct ToLowercase;
 
 impl CharacterFilter for ToLowercase {
     fn apply(&self, text: &mut Cow<str>) {
-        if text.is_ascii() {
+        const CHUNK_BYTES: usize = 1024;
+        let mut uppercase = false;
+        let ascii = text.as_bytes().chunks(CHUNK_BYTES).all(|chunk| {
             crate::utils::check_for_interrupts();
-            // ASCII lowercasing preserves byte length and has no context-sensitive rules.
+            uppercase = uppercase || chunk.iter().any(u8::is_ascii_uppercase);
+            chunk.is_ascii()
+        });
+        if ascii {
             crate::budget::bytes(text.len());
-            if text.bytes().any(|b| b.is_ascii_uppercase()) {
-                *text = Cow::Owned(text.to_ascii_lowercase());
+            if uppercase {
+                let mut lowercase = String::with_capacity(text.len());
+                for start in (0..text.len()).step_by(CHUNK_BYTES) {
+                    crate::utils::check_for_interrupts();
+                    let end = (start + CHUNK_BYTES).min(text.len());
+                    lowercase.push_str(&text[start..end]);
+                    lowercase[start..].make_ascii_lowercase();
+                }
+                *text = Cow::Owned(lowercase);
             }
             return;
         }
@@ -39,6 +51,7 @@ mod tests {
     use std::borrow::Cow;
 
     use super::{CharacterFilter, ToLowercase};
+    use crate::utils::interrupt_tests::count_interrupt_checks;
 
     #[test]
     fn ascii_lowercase_avoids_allocation() {
@@ -56,5 +69,26 @@ mod tests {
         let mut greek = Cow::Borrowed("ΌΔΥΣΣΕΎΣ");
         ToLowercase.apply(&mut greek);
         assert_eq!(greek, "όδυσσεύς");
+    }
+
+    #[test]
+    fn ascii_chunks_check_interrupts_and_preserve_unicode_boundaries() {
+        for len in [0usize, 1, 1023, 1024, 1025, 4097] {
+            let source = "a".repeat(len);
+            let mut text = Cow::Borrowed(source.as_str());
+            let (_, checks) = count_interrupt_checks(|| ToLowercase.apply(&mut text));
+            assert!(matches!(text, Cow::Borrowed(_)));
+            assert_eq!(checks, len.div_ceil(1024));
+
+            let source = source.to_ascii_uppercase();
+            let mut text = Cow::Borrowed(source.as_str());
+            let (_, checks) = count_interrupt_checks(|| ToLowercase.apply(&mut text));
+            assert_eq!(text, "a".repeat(len));
+            assert_eq!(checks, 2 * len.div_ceil(1024));
+        }
+        let source = format!("{}ΟΣ", "A".repeat(1023));
+        let mut text = Cow::Borrowed(source.as_str());
+        ToLowercase.apply(&mut text);
+        assert_eq!(text, source.to_lowercase());
     }
 }

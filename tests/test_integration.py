@@ -760,12 +760,21 @@ class IntegrationTests(unittest.TestCase):
     def test_prepare_transaction_with_definition_change_is_rejected(self):
         if self.db.execute("SHOW max_prepared_transactions").fetchone()[0] == "0":
             self.skipTest("max_prepared_transactions = 0")
-        with self.connect() as conn:
-            conn.execute("BEGIN")
-            conn.execute("SELECT create_text_analyzer('prepared_analyzer', '')")
-            with self.assertRaises(psycopg.Error):
-                conn.execute("PREPARE TRANSACTION 'pg_tokenizer_test'")
-            conn.execute("ROLLBACK")
+        gid = self.dbname + "_prepare"
+        for rollback_change in (False, True):
+            with self.subTest(rollback_change=rollback_change), self.connect() as conn:
+                conn.execute("BEGIN")
+                conn.execute("SAVEPOINT definition_change")
+                conn.execute("SELECT create_text_analyzer('prepared_analyzer', '')")
+                if rollback_change:
+                    conn.execute("ROLLBACK TO definition_change")
+                try:
+                    with self.assertRaisesRegex(psycopg.Error, "cannot PREPARE"):
+                        conn.execute(sql.SQL("PREPARE TRANSACTION {}").format(sql.Literal(gid)))
+                finally:
+                    conn.execute("ROLLBACK")
+                    if conn.execute("SELECT 1 FROM pg_prepared_xacts WHERE gid = %s", (gid,)).fetchone():
+                        conn.execute(sql.SQL("ROLLBACK PREPARED {}").format(sql.Literal(gid)))
         self.assertEqual(
             self.db.execute(
                 "SELECT count(*) FROM tokenizer_catalog.text_analyzer WHERE name = 'prepared_analyzer'"

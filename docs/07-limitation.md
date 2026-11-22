@@ -19,7 +19,7 @@ SELECT apply_text_analyzer('hello', 'text_analyzer1'); -- raises "not found"
 ```
 
 - **Physical standbys**: `definition_version` replicates over WAL, so hot-standby sessions refresh cached definitions once replay passes the commit LSN and the query uses a new snapshot, including across promotion.
-- **Two-phase commit (`PREPARE TRANSACTION`)**: Definition-changing API functions reject `PREPARE TRANSACTION`. Read-only transactions can be prepared; `PREPARE TRANSACTION` clears local caches and validation state on the preparing backend.
+- **Two-phase commit.** Once a definition-changing API call has modified the catalog, its outer transaction rejects `PREPARE TRANSACTION`, even after `ROLLBACK TO SAVEPOINT` undoes that change. End the transaction with `COMMIT` or `ROLLBACK` before starting work that needs two-phase commit. Read-only transactions can be prepared. Preparing clears the backend's local definition caches and snapshot validation state.
 - **Persisted outputs and volatility**: `apply_text_analyzer`, `tokenize`, `analyze_to_tsvector`, and `tokenize_to_tsvector` are `STABLE` (not `IMMUTABLE`) because definitions reside in mutable catalog tables. Store their outputs in ordinary table columns maintained by triggers or application writes rather than expression indexes or stored generated columns. Replacing a definition does not rewrite existing rows; recompute stored columns and rebuild indexes explicitly when tokenization output changes.
 
 ## Cancellation and Resource Use

@@ -18,7 +18,7 @@ Pigsty RPM and DEB packages omit embedded Lindera dictionaries to keep package s
 
 ## GitHub Release Packages (`.deb` and `.zip`)
 
-[GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases) provide `.deb` and `.zip` binaries for PostgreSQL 15–19 on `x86_64` (`amd64`) and `aarch64` (`arm64`).
+The 1.2.0 release workflow targets PostgreSQL 15–19 on `x86_64` (`amd64`) and `aarch64` (`arm64`). The examples use its package names. Check [GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases) for published downloads.
 
 Prebuilt GitHub binaries are compiled on Ubuntu 24.04 and require **`glibc >= 2.39`** (Ubuntu 24.04+ or Debian 13+). On older distributions such as EL 8/9, Debian 12, or Ubuntu 22.04, install from the Pigsty repository or build from source.
 
@@ -90,6 +90,10 @@ ALTER EXTENSION pg_tokenizer UPDATE;
 
 The `1.1.0 → 1.2.0` update preserves all SQL signatures, catalog definitions, `tokenizer_data` custom vocabularies, and token IDs. No re-tokenization or reindexing is required.
 
+Valid preload files from earlier versions work in place. Each node reads `$PGDATA/pg_tokenizer/preload_models` at startup. If either directory component or a model entry is a symlink, move its intended contents into real directories and regular files before restart.
+
+To recreate a damaged file, call `tokenizer_catalog.add_preload_model(name)` in the database containing the intended definition and restart that node. This also restores sharing when a hand-edited catalog row has different JSON whitespace from its older preload file. Version 1.2.0 copies the exact stored configuration. See [preload models](06-model.md#preload-model).
+
 ### Upgrading from 1.0.0 or 0.1.x
 
 `pg_tokenizer` ships the full migration chain `0.1.0 → 0.1.1 → 1.0.0 → 1.1.0 → 1.2.0`.
@@ -125,4 +129,4 @@ Installation and upgrade create two schemas and grant database-local management 
 A non-superuser database owner can create and drop its own analyzers, tokenizers, stopwords, synonyms, and custom models after an administrator installs the extension. Dropping a custom model created by another role still requires that table's owner or a superuser. Other application roles require explicit `GRANT` statements.
 
 - **Lindera server files**: Loading a Lindera `dictionary` or `user_dictionary` from a server filesystem path or `file://` URI requires superuser or `pg_read_server_files` privileges on every backend load. Unprivileged roles can use `embedded://` dictionaries or reuse a model preloaded by the postmaster whose catalog configuration matches.
-- **Cluster preload list**: `add_preload_model` and `remove_preload_model` write to `$PGDATA/pg_tokenizer/preload_models` across the cluster and are restricted to the extension owner and administrators. Changes take effect on PostgreSQL restart; unreadable or invalid preload entries log a `WARNING` and are skipped.
+- The **cluster preload list** lives in `$PGDATA/pg_tokenizer/preload_models`. The function owner and superusers can call `add_preload_model` and `remove_preload_model` or grant `EXECUTE` explicitly. A database owner receives `EXECUTE` on `list_preload_models()` by default. PostgreSQL reads the files on restart and logs a warning for each entry it skips.

@@ -18,6 +18,7 @@ Multilingual text analysis and vocabulary tokenization for PostgreSQL 15–19 (`
 - Analyze European languages with Snowball stemmers, Chinese with Jieba, and Japanese or Korean with Lindera.
 - Use built-in vocabularies, Hugging Face models, or custom vocabularies trained on table data.
 - Return text tokens, integer token IDs, or positioned `tsvector` values for [vchord_bm25](https://github.com/pgsty/vchord_bm25) and PostgreSQL GIN/GiST indexes.
+- `to_lowercase` reuses ASCII input that has no uppercase letters and allocates an output string when it converts uppercase ASCII. The `stopwords`, `skip_non_alphanumeric`, and `synonym` batch filters reuse the input token vector. A longer synonym can still grow an individual token's string buffer.
 
 ## Installation
 
@@ -28,7 +29,7 @@ pig repo add pgsql -u
 pig ext add pg_tokenizer
 ```
 
-Prebuilt `.deb` and `.zip` packages (`x86_64` and `aarch64`, built on Ubuntu 24.04 / `glibc >= 2.39` for Ubuntu 24.04+ and Debian 13+) and source archives are available on [GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases). On older Linux distributions, install from Pigsty or build from source. See the [installation guide](docs/01-installation.md) for platform and dictionary details.
+The release workflow builds `.deb` and `.zip` packages for Ubuntu 24.04+ and Debian 13+ (`x86_64` and `aarch64`, `glibc >= 2.39`) and a source archive. Published artifacts appear on [GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases). On older Linux distributions, install from Pigsty or build from source. See the [installation guide](docs/01-installation.md) for platform and dictionary details.
 
 Add `pg_tokenizer` to `shared_preload_libraries`, restart PostgreSQL, then enable the extension:
 
@@ -86,7 +87,7 @@ Install the new library and SQL files, restart PostgreSQL on the primary and all
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
 
-Upgrading from `1.1.0` to `1.2.0` preserves all catalog definitions, custom vocabularies, and token IDs in place. See the [upgrade guide](docs/01-installation.md#upgrading) when migrating from earlier versions.
+Upgrading from `1.1.0` to `1.2.0` preserves catalog definitions, custom vocabularies, token IDs, and valid preload files. If you use symlinks for the preload directory or its entries, migrate them to regular directories and files before restart. See the [upgrade guide](docs/01-installation.md#upgrading).
 
 ## Testing
 

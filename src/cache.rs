@@ -66,10 +66,10 @@ fn end_validation() {
 // after promotion. Comparing in both directions also protects old snapshots.
 fn check_catalog_version() -> bool {
     use pgrx::pg_sys;
-    let snapshot = unsafe { pg_sys::GetActiveSnapshot() };
-    if snapshot.is_null() {
+    if !unsafe { pg_sys::ActiveSnapshotSet() } {
         return false;
     }
+    let snapshot = unsafe { pg_sys::GetActiveSnapshot() };
     let worker = unsafe { pg_sys::ParallelWorkerNumber } >= 0;
     let key = SnapshotKey {
         statement: unsafe { pg_sys::GetCurrentStatementStartTimestamp() },

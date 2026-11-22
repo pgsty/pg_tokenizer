@@ -26,9 +26,9 @@
 
 <br/>
 
-- `tokenizer_catalog.add_preload_model(name TEXT)`: Add a model to the cluster-wide preload list (administrator only; nontransactional).
-- `tokenizer_catalog.remove_preload_model(name TEXT)`: Remove a model from the cluster-wide preload list (administrator only; nontransactional).
-- `tokenizer_catalog.list_preload_models() RETURNS TEXT[]`: List all preload models.
+- `tokenizer_catalog.add_preload_model(name TEXT)` atomically writes the built-in marker or the current database's model configuration to the cluster-wide preload directory.
+- `tokenizer_catalog.remove_preload_model(name TEXT)` removes that model's entry. Both management functions take effect on disk immediately, including inside a transaction that later rolls back. The function owner can grant `EXECUTE` on either function.
+- `tokenizer_catalog.list_preload_models() RETURNS TEXT[]` lists configured names in sorted order, including entries whose contents failed to load. A missing directory returns an empty array. See [preload configuration and recovery](06-model.md#preload-model).
 
 <br/>
 

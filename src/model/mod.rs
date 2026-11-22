@@ -11,9 +11,14 @@ mod custom;
 mod huggingface;
 mod lindera;
 
+use std::io::{self, Read, Write};
 use std::sync::{Arc, LazyLock};
 
+use anyhow::{ensure, Context};
 use builtin::{get_builtin_model, is_builtin_model};
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt, OpenOptionsSyncExt};
+use cap_std::ambient_authority;
+use cap_std::fs::{Dir, OpenOptions};
 use custom::{CustomModel, CustomModelConfig};
 use dashmap::DashMap;
 use huggingface::{HuggingFaceConfig, HuggingFaceModel};
@@ -116,10 +121,7 @@ pub(super) fn clear_cache() {
 }
 
 fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {
-    let config: String = catalog_one(
-        "SELECT config FROM tokenizer_catalog.model WHERE name = $1",
-        &[name.into()],
-    )?;
+    let config = get_model_config(name)?;
     if let Some(preloaded) = PRELOADED_MODELS.get(name) {
         if preloaded.0 == config {
             return Some(preloaded.1.clone());
@@ -129,13 +131,11 @@ fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {
     Some(build_model(name, &config))
 }
 
-fn get_model_config(name: &str) -> Option<ModelConfig> {
-    let config_bytes: String = catalog_one(
+fn get_model_config(name: &str) -> Option<String> {
+    catalog_one(
         "SELECT config FROM tokenizer_catalog.model WHERE name = $1",
         &[name.into()],
-    )?;
-
-    Some(serde_json::from_str(&config_bytes).unwrap_or_else(|e| invalid_config("model", name, e)))
+    )
 }
 
 fn build_model(name: &str, config: &ModelConfig) -> TokenizerModelPtr {
@@ -175,115 +175,185 @@ pub fn validate_new_model_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn sync_directory(_dir: &Dir) -> io::Result<()> {
+    #[cfg(unix)]
+    _dir.open(".")?.sync_all()?;
+    Ok(())
+}
+
+fn preload_directory(create: bool) -> io::Result<(Dir, bool)> {
+    let mut parent = Dir::open_ambient_dir(".", ambient_authority())?;
+    let mut created = false;
+    for component in ["pg_tokenizer", "preload_models"] {
+        created = false;
+        parent = match parent.open_dir_nofollow(component) {
+            Err(err) if create && err.kind() == io::ErrorKind::NotFound => {
+                match parent.create_dir(component) {
+                    Ok(()) => {
+                        sync_directory(&parent)?;
+                        created = true;
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(err) => return Err(err),
+                }
+                parent.open_dir_nofollow(component)?
+            }
+            result => result?,
+        };
+    }
+    Ok((parent, created))
+}
+
+fn write_preload(dir: &Dir, name: &str, content: &str) -> io::Result<()> {
+    let temporary = format!(".preload-{}", uuid::Uuid::new_v4());
+    let mut file = dir.open_with(&temporary, OpenOptions::new().write(true).create_new(true))?;
+    let written = file
+        .write_all(content.as_bytes())
+        .and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(err) = written.and_then(|()| dir.rename(&temporary, dir, name)) {
+        let _ = dir.remove_file(&temporary);
+        return Err(err);
+    }
+    sync_directory(dir)
+}
+
+fn preload_names(dir: &Dir, startup: bool) -> io::Result<Vec<String>> {
+    let mut models = Vec::new();
+    for entry in dir.entries()? {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(err) if startup => {
+                pgrx::warning!("pg_tokenizer: cannot read preload directory entry: {}", err);
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        let filename = entry.file_name();
+        if filename.as_encoded_bytes().starts_with(b".preload-") {
+            continue;
+        }
+        match (filename.to_str(), entry.file_type()) {
+            (Some(name), Ok(kind)) if kind.is_file() && validate_model_name(name).is_ok() => {
+                models.push(name.to_owned());
+            }
+            (_, Err(err)) if err.kind() == io::ErrorKind::NotFound => {}
+            (_, Err(err)) if !startup => return Err(err),
+            _ if startup => pgrx::warning!("pg_tokenizer: skipping preload model {:?}", filename),
+            _ => {}
+        }
+    }
+    models.sort_unstable();
+    models.dedup();
+    Ok(models)
+}
+
 #[pgrx::pg_extern(volatile, parallel_unsafe)]
 pub fn add_preload_model(name: &str) {
     validate_model_name(name).unwrap();
     get_model(name);
-
-    let dir_path = std::path::Path::new("pg_tokenizer/preload_models");
-    if let Err(e) = std::fs::create_dir_all(dir_path) {
-        pgrx::error!("Failed to create preload directory: {}", e);
-    }
-    let path = dir_path.join(name);
     let content = if is_builtin_model(name) {
         String::new()
     } else {
-        let config = get_model_config(name).unwrap();
-        serde_json::to_string(&config).unwrap()
+        get_model_config(name).unwrap_or_else(|| panic!("Model not found: {name}"))
     };
-    if let Err(e) = std::fs::write(&path, content) {
-        pgrx::error!("Failed to save preload model: {}", e);
-    }
+    preload_directory(true)
+        .and_then(|(dir, _)| write_preload(&dir, name, &content))
+        .unwrap_or_else(|err| pgrx::error!("Failed to save preload model {}: {}", name, err));
 }
 
 #[pgrx::pg_extern(volatile, parallel_unsafe)]
 pub fn remove_preload_model(name: &str) {
     validate_model_name(name).unwrap();
-    let path = std::path::Path::new("pg_tokenizer/preload_models").join(name);
-    match std::fs::remove_file(&path) {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    match preload_directory(false).and_then(|(dir, _)| {
+        dir.remove_file(name)?;
+        sync_directory(&dir)
+    }) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
             pgrx::warning!("Preload model not found: {}", name);
         }
-        Err(e) => {
-            pgrx::error!("Failed to remove file: {}", e);
-        }
+        Err(err) => pgrx::error!("Failed to remove preload model {}: {}", name, err),
     }
 }
 
 #[pgrx::pg_extern(volatile, parallel_unsafe)]
 pub fn list_preload_models() -> Vec<String> {
-    let dir_path = std::path::Path::new("pg_tokenizer/preload_models");
-    let entries = match std::fs::read_dir(dir_path) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
-        Err(e) => pgrx::error!("Failed to read preload directory: {}", e),
-    };
-    let mut models = Vec::new();
-    for entry in entries {
-        let entry = entry.unwrap_or_else(|e| pgrx::error!("Failed to read preload entry: {}", e));
-        let name = entry.file_name().into_string().unwrap();
-        models.push(name);
+    match preload_directory(false).and_then(|(dir, _)| preload_names(&dir, false)) {
+        Ok(models) => models,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => pgrx::error!("Failed to read preload directory: {}", err),
     }
+}
 
-    models
+fn load_preload(dir: &Dir, name: &str) -> anyhow::Result<()> {
+    let file = dir.open_with(
+        name,
+        OpenOptions::new()
+            .read(true)
+            .nonblock(true)
+            .follow(FollowSymlinks::No),
+    )?;
+    let metadata = file.metadata()?;
+    ensure!(metadata.is_file(), "expected a regular file");
+    if is_builtin_model(name) {
+        ensure!(metadata.len() == 0, "expected an empty built-in marker");
+        get_builtin_model(name);
+    } else {
+        let max = pgrx::pg_sys::MaxAllocSize as u64;
+        ensure!(
+            metadata.len() <= max,
+            "configuration exceeds PostgreSQL's text limit"
+        );
+        let mut content = String::new();
+        file.take(max + 1).read_to_string(&mut content)?;
+        ensure!(
+            content.len() as u64 <= max,
+            "configuration exceeds PostgreSQL's text limit"
+        );
+        let config = serde_json::from_str(&content).context("invalid model configuration")?;
+        let object = build_model(name, &config);
+        PRELOADED_MODELS.insert(name.to_owned(), (content, object));
+    }
+    Ok(())
 }
 
 pub fn init() {
-    let dir_path = std::path::Path::new("pg_tokenizer/preload_models");
-    if !dir_path.exists() {
-        match std::fs::create_dir_all(dir_path) {
-            Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => {
-                pgrx::warning!("pg_tokenizer: cannot create preload directory: {}", e);
-                return;
-            }
-        }
-        for name in builtin::PRELOAD_MODELS {
-            let path = dir_path.join(name);
-            if let Err(e) = std::fs::write(&path, "") {
-                pgrx::warning!("pg_tokenizer: cannot save default preload {}: {}", name, e);
-            }
-        }
-    }
-
-    let entries = match std::fs::read_dir(dir_path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            pgrx::warning!("pg_tokenizer: cannot read preload directory: {}", e);
+    let (dir, created) = match preload_directory(true) {
+        Ok(result) => result,
+        Err(err) => {
+            pgrx::warning!("pg_tokenizer: cannot open preload directory: {}", err);
             return;
         }
     };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(e) => {
-                pgrx::warning!("pg_tokenizer: cannot read preload entry: {}", e);
-                continue;
+    if created {
+        for name in builtin::PRELOAD_MODELS {
+            if let Err(err) = write_preload(&dir, name, "") {
+                pgrx::warning!(
+                    "pg_tokenizer: cannot save default preload {}: {}",
+                    name,
+                    err
+                );
             }
-        };
-        // All per-entry validation belongs inside the recovery boundary.
-        // Preloading is an optimization; a stale entry must not stop startup.
-        let loaded = std::panic::catch_unwind(|| {
-            let name = entry
-                .file_name()
-                .into_string()
-                .expect("invalid preload name");
-            validate_model_name(&name).unwrap();
-            if get_builtin_model(&name).is_some() {
-                return;
+        }
+    }
+    let names = match preload_names(&dir, true) {
+        Ok(names) => names,
+        Err(err) => {
+            pgrx::warning!("pg_tokenizer: cannot read preload directory: {}", err);
+            return;
+        }
+    };
+    for name in names {
+        match std::panic::catch_unwind(|| load_preload(&dir, &name)) {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                pgrx::warning!("pg_tokenizer: skipping preload model {:?}: {}", name, err)
             }
-            let content = std::fs::read_to_string(entry.path()).unwrap();
-            let config: ModelConfig = serde_json::from_str(&content).unwrap();
-            let object = build_model(&name, &config);
-            PRELOADED_MODELS.insert(name, (content, object));
-        });
-        if loaded.is_err() {
-            pgrx::warning!(
-                "pg_tokenizer: skipping preload model that failed to load: {}",
-                entry.file_name().to_string_lossy()
-            );
+            Err(_) => pgrx::warning!(
+                "pg_tokenizer: skipping preload model {:?}: model failed to load",
+                name
+            ),
         }
     }
 }
