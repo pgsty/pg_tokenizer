@@ -23,3 +23,16 @@ SELECT tokenizer_catalog.apply_text_analyzer('PostgreSQL is a powerful, open-sou
 
 statement ok
 SELECT tokenizer_catalog.drop_text_analyzer('text_analyzer1');
+
+statement ok
+SELECT tokenizer_catalog.create_text_analyzer('regex_branch_order', $$
+pre_tokenizer.regex = 'id[0-9]*[0-9]|id[0-9]*-'
+$$);
+
+query T
+SELECT tokenizer_catalog.apply_text_analyzer('id42-', 'regex_branch_order');
+----
+{id42}
+
+statement ok
+ROLLBACK;

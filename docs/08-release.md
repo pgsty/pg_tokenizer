@@ -1,6 +1,6 @@
 # Release and PGXN Packaging
 
-Target release: **`1.2.0`** (PostgreSQL 15–19 on `x86_64` and `aarch64`, `pgrx 0.20.0`).
+Release **`1.2.0`** targets PostgreSQL 15–19 on `x86_64` and `aarch64`. CI and packaging use Rust `1.100.0` from `rust-toolchain.toml` and `pgrx 0.20.0`.
 
 ## Maintainer Release Checklist
 

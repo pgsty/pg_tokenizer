@@ -67,12 +67,12 @@ Store analyzed vectors in a column and build a BM25 index with `vchord_bm25`. Us
 
 ## Build from Source
 
-Requires Rust 1.99.1+, PostgreSQL 15–19 development headers, and matching Clang, libclang, and LLVM tools.
+The repository pins Rust 1.100.0 for development, CI, and release builds. Source builds support Rust 1.99.1 or later and require Python 3.11+, PostgreSQL 15–19 development headers, and matching Clang, libclang, and LLVM tools.
 
 ```bash
-cargo install cargo-pgrx --version 0.20.0 --locked
 git clone https://github.com/pgsty/pg_tokenizer.git
 cd pg_tokenizer
+cargo install cargo-pgrx --version 0.20.0 --locked
 PG_CONFIG=/path/to/pg_config make build
 sudo make PG_CONFIG=/path/to/pg_config install
 ```
@@ -87,7 +87,7 @@ Install the new library and SQL files, restart PostgreSQL on the primary and all
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
 
-Upgrading from `1.1.0` to `1.2.0` preserves catalog definitions, custom vocabularies, token IDs, and valid preload files. If you use symlinks for the preload directory or its entries, migrate them to regular directories and files before restart. See the [upgrade guide](docs/01-installation.md#upgrading).
+Upgrading from `1.1.0` to `1.2.0` preserves catalog definitions, vocabulary IDs, and valid preload files. Changes to regex matching and the Rust compiler's Unicode tables can affect stored tokens. If you use symlinks for the preload directory or its entries, migrate them to regular directories and files before restart. See the [upgrade guide](docs/01-installation.md#upgrading).
 
 ## Testing
 

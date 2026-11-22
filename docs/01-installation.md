@@ -64,12 +64,12 @@ sudo install -m 644 pg_tokenizer/pg_tokenizer--*.sql pg_tokenizer/pg_tokenizer.c
 
 ## From Source
 
-Building from source requires Rust 1.99.1+, Python 3.11+, PostgreSQL 15–19 development headers, and matching Clang, libclang, and LLVM tools (see [development](02-development.md)).
+Building from source requires Rust 1.99.1+, Python 3.11+, PostgreSQL 15–19 development headers, and matching Clang, libclang, and LLVM tools. With rustup, the checkout selects Rust 1.100.0. See [development](02-development.md).
 
 ```sh
-cargo install cargo-pgrx --version 0.20.0 --locked
 git clone https://github.com/pgsty/pg_tokenizer.git
 cd pg_tokenizer
+cargo install cargo-pgrx --version 0.20.0 --locked
 PG_CONFIG=/path/to/pg_config make build
 sudo make PG_CONFIG=/path/to/pg_config install
 ```
@@ -88,7 +88,14 @@ sudo make PG_CONFIG=/path/to/pg_config install
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
 
-The `1.1.0 → 1.2.0` update preserves all SQL signatures, catalog definitions, `tokenizer_data` custom vocabularies, and token IDs. No re-tokenization or reindexing is required.
+The `1.1.0 → 1.2.0` update preserves SQL signatures, catalog definitions, and the IDs assigned to terms in `tokenizer_data` vocabularies. Embedded IPADIC and the external Lindera 6 dictionary format are the same in both versions.
+
+Two changes can affect the tokens produced from the same text.
+
+- `regex` 1.13.2 corrects match boundaries when alternatives start with the same variable-length expression. For example, the pre-tokenizer pattern `id[0-9]*[0-9]|id[0-9]*-` applied to `id42-` now returns `id42`. Version 1.1.0 returned `id42-`.
+- Rust 1.100.0 supplies Unicode 18.0 tables for `to_lowercase` and `skip_non_alphanumeric`. Rust 1.99.1 uses Unicode 17.0. For example, a build with Rust 1.100.0 lowercases U+A7DD to U+0277 and retains U+A7DD as a single alphanumeric token. A build with Rust 1.99.1 leaves its case unchanged and drops that single-character token in the filter.
+
+Use the same compiler version when building for nodes that share data. For analyzers using these patterns or affected Unicode characters, compare representative outputs across the upgrade. Where tokens differ, reprocess the source text through the ingestion pipeline. With `create_custom_model_tokenizer_and_trigger`, updating the source column on an affected row reruns both triggers, adding new terms to the vocabulary before recomputing the embedding. PostgreSQL updates indexes on the stored arrays or vectors as those rows are rewritten.
 
 Valid preload files from earlier versions work in place. Each node reads `$PGDATA/pg_tokenizer/preload_models` at startup. If either directory component or a model entry is a symlink, move its intended contents into real directories and regular files before restart.
 

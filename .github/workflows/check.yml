@@ -80,7 +80,7 @@ jobs:
       - name: Unit Test
         run: cargo test --locked --no-fail-fast --features "pg${{ matrix.version }} lindera-ipadic"
       - name: Install
-        run: cargo pgrx install --features "pg${{ matrix.version }} lindera-ipadic" --release --sudo
+        run: cargo pgrx install --cargo=--locked --features "pg${{ matrix.version }} lindera-ipadic" --release --sudo
       - name: Verify symbols and install SQL
         run: python3 tools/check_install.py
       - name: Integration Test

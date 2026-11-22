@@ -1,7 +1,7 @@
 # Development
 
 Building `pg_tokenizer` requires:
-- Rust `1.99.1` or later
+- Rust `1.100.0` for development, CI, and release builds, selected by `rust-toolchain.toml`. The minimum supported compiler is `1.99.1`, as required by `pgrx 0.20.0`.
 - Python `3.11` or later
 - PostgreSQL `15–19` server and development headers (`pg_config`)
 - Matching Clang, libclang, and LLVM tools (set `CC`, `CLANG_PATH`, and `LIBCLANG_PATH` when multiple LLVM versions are installed; set `CLANG_NO_DEFAULT_CONFIG=1` if Clang loads a default configuration file)
@@ -29,6 +29,8 @@ cargo pgrx init
 PG_CONFIG=/path/to/pg_config make build
 sudo make PG_CONFIG=/path/to/pg_config install
 ```
+
+To build with the minimum supported Rust version under rustup, set `RUSTUP_TOOLCHAIN=1.99.1` for the build command.
 
 > Do not set `--no-gc-sections` in global `RUSTFLAGS` or Cargo config: `cargo-pgrx 0.20.0` handles schema-section retention for the `cdylib` target directly, while global `--no-gc-sections` breaks standalone Rust unit-test linking.
 
