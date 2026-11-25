@@ -3,12 +3,12 @@
 [![Website: vchord.pgsty.com](https://img.shields.io/badge/Website-vchord.pgsty.com-slategray?style=flat&logo=cilium&logoColor=white)](https://vchord.pgsty.com/)
 [![Docs: tokenizer](https://img.shields.io/badge/Docs-tokenizer-slategray?style=flat)](https://vchord.pgsty.com/docs/tokenizer/)
 [![Catalog: tokenizer](https://img.shields.io/badge/Catalog-tokenizer-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](https://pgext.cloud/ext/pg_tokenizer)
-[![Version: 1.2.0](https://img.shields.io/badge/Version-1.2.0-slategray?style=flat)](docs/release-notes/1.2.0.md)
+[![Version: 1.3.0](https://img.shields.io/badge/Version-1.3.0-slategray?style=flat)](docs/release-notes/1.3.0.md)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-slategray?style=flat&logo=opensourceinitiative&logoColor=green)](https://github.com/pgsty/pg_tokenizer/blob/main/LICENSE)
 [![GitHub Stars](https://img.shields.io/github/stars/pgsty/pg_tokenizer?style=flat&logo=github&logoColor=black&color=slategray)](https://star-history.com/#pgsty/pg_tokenizer&Date)
 [![PostgreSQL: 15-19](https://img.shields.io/badge/PostgreSQL-15--19-%233E668F?style=flat&logo=postgresql&logoColor=white&labelColor=3E668F)](#build-from-source)
 
-pg_tokenizer 1.2.0 provides multilingual text analysis and vocabulary tokenization for PostgreSQL 15–19 on `x86_64` and `aarch64`.
+pg_tokenizer 1.3.0 provides multilingual text analysis and vocabulary tokenization for PostgreSQL 15–19 on `x86_64` and `aarch64`.
 
 [Documentation](https://vchord.pgsty.com/docs/tokenizer/) · [Releases](https://github.com/pgsty/pg_tokenizer/releases) · [Issues](https://github.com/pgsty/pg_tokenizer/issues)
 
@@ -70,7 +70,7 @@ Store analyzed vectors in a column and build a BM25 index with `vchord_bm25`. Us
 The repository pins Rust 1.100.0 for development, CI, and release builds. Source builds support Rust 1.99.1 or later and require Python 3.11+, GNU Make, PostgreSQL 15–19 development headers, matching Clang, libclang, and LLVM tools, and `cargo-pgrx` 0.20.0 to match pgrx 0.20.0.
 
 ```bash
-git clone --branch v1.2.0 --depth 1 https://github.com/pgsty/pg_tokenizer.git
+git clone --branch v1.3.0 --depth 1 https://github.com/pgsty/pg_tokenizer.git
 cd pg_tokenizer
 cargo install cargo-pgrx --version 0.20.0 --locked
 PG_CONFIG=/path/to/pg_config make build
@@ -86,6 +86,8 @@ Install the new library and SQL files, restart PostgreSQL on the primary and all
 ```sql
 ALTER EXTENSION pg_tokenizer UPDATE;
 ```
+
+To upgrade from `1.2.0`, install the `1.3.0` files on every node, restart PostgreSQL, and run `ALTER EXTENSION pg_tokenizer UPDATE` in each database on the primary. The upgrade preserves custom vocabulary IDs and dependent objects. See the [upgrade guide](docs/01-installation.md#upgrading).
 
 Upgrading from `1.1.0` to `1.2.0` preserves catalog definitions, custom vocabulary IDs, and the preload file format. Replace external Lindera system dictionaries on every node and migrate preload symlinks to real directories and regular files before restart. If Lindera segmentation, regex matching, or updated Unicode tables change your tokens, regenerate stored output from the source text before switching queries to the new pipeline. PostgreSQL 14 installations must first move to a supported server major. See the [1.2.0 release notes](docs/release-notes/1.2.0.md) and the [upgrade guide](docs/01-installation.md#upgrading).
 

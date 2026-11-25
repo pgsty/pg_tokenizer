@@ -49,6 +49,9 @@ fn oversized_token_id(tokenizer: &Tokenizer) -> Option<(String, u64)> {
         let value = serde_json::to_value(post_processor).expect("post-processor serializes");
         post_processor_ids(&value, &mut ids);
     }
+    if let Some(padding) = tokenizer.get_padding() {
+        ids.push((padding.pad_token.clone(), padding.pad_id.into()));
+    }
     ids.into_iter()
         .filter(|(_, id)| *id > limit)
         .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
@@ -96,6 +99,29 @@ impl TokenizerModel for HuggingFaceModel {
     // default TokenizerModel loop, which checks for interrupts per token.
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
         self.tokenizer.apply_batch(tokens)
+    }
+
+    fn apply_str_to_i32(
+        &self,
+        text: &str,
+        tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+        budget: &mut crate::budget::Output,
+    ) {
+        self.tokenizer
+            .apply_str_to_i32(text, tokenizer_name, limits, out, budget);
+    }
+
+    fn apply_batch_to_i32(
+        &self,
+        tokens: Vec<String>,
+        tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+    ) {
+        self.tokenizer
+            .apply_batch_to_i32(tokens, tokenizer_name, limits, out);
     }
 }
 
@@ -278,5 +304,25 @@ mod tests {
             oversized(vocab, sequence, json!([])),
             Some(("[SEP]".into(), MAX + 2))
         );
+    }
+
+    #[test]
+    fn padding_ids() {
+        let with_pad = |pad_id: u64| {
+            let config = json!({
+                "model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "a": 1}, "unk_token": "[UNK]"},
+                "padding": {
+                    "strategy": {"Fixed": 2},
+                    "direction": "Right",
+                    "pad_to_multiple_of": null,
+                    "pad_id": pad_id,
+                    "pad_type_id": 0,
+                    "pad_token": "[PAD]"
+                }
+            });
+            oversized_token_id(&Tokenizer::from_bytes(config.to_string()).unwrap())
+        };
+        assert_eq!(with_pad(MAX), None);
+        assert_eq!(with_pad(MAX + 1), Some(("[PAD]".into(), MAX + 1)));
     }
 }

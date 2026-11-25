@@ -37,7 +37,7 @@
 
 <br/>
 
-- `tokenizer_catalog.create_huggingface_model(name TEXT, config TEXT)`: Create a huggingface model. Token IDs (vocabulary, added tokens, and post-processor special tokens) must not exceed 2147483647.
+- `tokenizer_catalog.create_huggingface_model(name TEXT, config TEXT)`: Create a huggingface model. Token IDs (vocabulary, added tokens, post-processor special tokens, and `padding.pad_id`) must not exceed 2147483647.
 - `tokenizer_catalog.drop_huggingface_model(name TEXT)`: Drop a huggingface model.
 
 ### Tokenizer
@@ -63,6 +63,8 @@ These positive session settings reject oversized input or expansion with SQLSTAT
 | `pg_tokenizer.max_output_tokens` | 1,000,000 | Tokens or model IDs in one stage |
 | `pg_tokenizer.max_output_bytes` | 67,108,864 | Token bytes plus descriptors, ID bytes, character output or ngram offsets |
 | `pg_tokenizer.max_piece_bytes` | 1,048,576 | Input to one regex or opaque library/dictionary call |
+
+`max_input_bytes` bounds a whole analyzer call, while `max_piece_bytes` bounds a single uninterruptible regex, Jieba, Lindera, Hugging Face, `wiki_tocken`, or `pg_dict` call. Keep the 1 MiB default for online queries; batch jobs that intentionally pass larger single documents directly to an opaque model or regex can raise it per transaction with `SET LOCAL pg_tokenizer.max_piece_bytes = ...`.
 
 ### Options for `text analyzer`
 

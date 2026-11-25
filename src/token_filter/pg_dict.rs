@@ -13,17 +13,21 @@ use pgrx::IntoDatum;
 use super::TokenFilter;
 
 pub struct PgDictTokenFilter {
-    name: String,
+    name: CString,
 }
 
-fn dictionary_oid(name: &str) -> pgrx::pg_sys::Oid {
+fn dictionary_oid_cstr(name: &CStr) -> pgrx::pg_sys::Oid {
     unsafe {
         pgrx::direct_function_call::<pgrx::pg_sys::Oid>(
             pgrx::pg_sys::regdictionaryin,
-            &[CString::new(name).unwrap().as_c_str().into_datum()],
+            &[name.into_datum()],
         )
     }
     .expect("regdictionary input returned NULL")
+}
+
+fn dictionary_oid(name: &str) -> pgrx::pg_sys::Oid {
+    dictionary_oid_cstr(&CString::new(name).unwrap())
 }
 
 // Resolve under the creator's search_path, then persist a properly quoted name.
@@ -76,38 +80,60 @@ impl PgDictTokenFilter {
         } else {
             name.to_owned()
         };
+        let name = CString::new(name).unwrap();
         // Validate on load; OIDs are deliberately not retained across calls.
-        unsafe { pgrx::pg_sys::lookup_ts_dictionary_cache(dictionary_oid(&name)) };
+        unsafe { pgrx::pg_sys::lookup_ts_dictionary_cache(dictionary_oid_cstr(&name)) };
         PgDictTokenFilter { name }
     }
 }
 
 impl TokenFilter for PgDictTokenFilter {
     fn apply(&self, token: String) -> Vec<String> {
-        self.apply_with_oid(dictionary_oid(&self.name), token)
+        let limits = crate::budget::Limits::current();
+        let mut budget = crate::budget::Output::new(limits);
+        let mut results = Vec::new();
+        self.apply_into_with_oid(
+            dictionary_oid_cstr(&self.name),
+            token,
+            limits,
+            &mut budget,
+            &mut results,
+        );
+        results
     }
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
+        self.apply_batch_with_limits(tokens, crate::budget::Limits::current())
+    }
+
+    fn apply_batch_with_limits(
+        &self,
+        tokens: Vec<String>,
+        limits: crate::budget::Limits,
+    ) -> Vec<String> {
         // Resolve once per batch, using PostgreSQL's own namespace/syscaches.
         // DROP/CREATE gets its new OID; ALTER is handled by the TS cache.
-        let oid = dictionary_oid(&self.name);
-        let mut budget = crate::budget::Output::default();
+        let oid = dictionary_oid_cstr(&self.name);
+        let mut budget = crate::budget::Output::new(limits);
         let mut results = Vec::with_capacity(tokens.len());
         for token in tokens {
             crate::utils::check_for_interrupts();
-            let output = self.apply_with_oid(oid, token);
-            for token in &output {
-                budget.text(token.len());
-            }
-            results.extend(output);
+            self.apply_into_with_oid(oid, token, limits, &mut budget, &mut results);
         }
         results
     }
 }
 
 impl PgDictTokenFilter {
-    fn apply_with_oid(&self, oid: pgrx::pg_sys::Oid, token: String) -> Vec<String> {
-        crate::budget::piece(token.len());
+    fn apply_into_with_oid(
+        &self,
+        oid: pgrx::pg_sys::Oid,
+        token: String,
+        limits: crate::budget::Limits,
+        budget: &mut crate::budget::Output,
+        results: &mut Vec<String>,
+    ) {
+        limits.check_piece(token.len());
         unsafe {
             let dict = pgrx::pg_sys::lookup_ts_dictionary_cache(oid)
                 .as_mut()
@@ -142,12 +168,12 @@ impl PgDictTokenFilter {
             }
             if res.is_null() {
                 // not recognized
-                return vec![token];
+                budget.text(token.len());
+                results.push(token);
+                return;
             }
 
             let mut lexeme_ptr: *const pgrx::pg_sys::TSLexeme = res.cast_mut_ptr();
-            let mut results = Vec::new();
-            let mut budget = crate::budget::Output::default();
             while !(*lexeme_ptr).lexeme.is_null() {
                 let str = CStr::from_ptr((*lexeme_ptr).lexeme);
                 budget.text(str.to_bytes().len());
@@ -156,8 +182,6 @@ impl PgDictTokenFilter {
                 lexeme_ptr = lexeme_ptr.add(1);
             }
             pgrx::pg_sys::pfree(res.cast_mut_ptr());
-
-            results
         }
     }
 }

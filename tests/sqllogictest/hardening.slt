@@ -217,6 +217,14 @@ SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf
 ----
 22023 token ID 2147483649 of Hugging Face model "hf_sequence" is out of range for type integer +detail
 
+query T
+SELECT pg_temp.error_of($q$SELECT tokenizer_catalog.create_huggingface_model('hf_padding',
+'{"model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "a": 1}, "unk_token": "[UNK]"},
+  "padding": {"strategy": {"Fixed": 2}, "direction": "Right", "pad_to_multiple_of": null,
+              "pad_id": 2147483648, "pad_type_id": 0, "pad_token": "[PAD]"}}')$q$);
+----
+22023 token ID 2147483648 of Hugging Face model "hf_padding" is out of range for type integer +detail
+
 # Rows stored before the import check still load; out-of-range IDs fail
 # clearly at tokenization.
 statement ok

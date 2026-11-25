@@ -15,6 +15,20 @@ mkdir -p ./build/zip
 cp ./target/schema.sql ./build/zip/pg_tokenizer--$SEMVER.sql
 sed -e "s/@CARGO_VERSION@/$SEMVER/g" <./pg_tokenizer.control >./build/zip/pg_tokenizer.control
 cp ./target/release/libpg_tokenizer.so ./build/zip/pg_tokenizer.so
+# The tuple-header checks became exported server functions in these minor releases.
+pg_dependency="postgresql-${VERSION}"
+pg_minimum=$VERSION
+nm -D --undefined-only ./build/zip/pg_tokenizer.so > ./target/pg_tokenizer.imports
+if grep -Eq '[[:space:]](DatumGetHeapTupleHeader|heap_datum_check)$' ./target/pg_tokenizer.imports; then
+    case "$VERSION" in
+        15) pg_minimum=15.20 ;;
+        16) pg_minimum=16.16 ;;
+        17) pg_minimum=17.12 ;;
+        18) pg_minimum=18.7 ;;
+    esac
+    pg_dependency+=" (>= $pg_minimum)"
+fi
+echo "# Minimum PostgreSQL version for this binary: $pg_minimum" >> ./build/zip/pg_tokenizer.control
 ipadic_manifest=$(cargo metadata --locked --format-version 1 --filter-platform "$(rustc --print host-tuple)" \
   --features "pg${VERSION} lindera-ipadic" | python3 -c 'import json, sys
 manifest, = (pkg["manifest_path"] for pkg in json.load(sys.stdin)["packages"] if pkg["name"] == "lindera-ipadic")
@@ -49,7 +63,7 @@ Version: ${SEMVER}-1
 Section: database
 Priority: optional
 Architecture: ${PLATFORM}
-Depends: postgresql-${VERSION}, ${SHLIBS_DEPENDS}
+Depends: ${pg_dependency}, ${SHLIBS_DEPENDS}
 Maintainer: Ruohang Feng <rh@vonng.com>
 Description: Tokenizer plugin for PostgreSQL
 Homepage: https://vchord.pgsty.com/

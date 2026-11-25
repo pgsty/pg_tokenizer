@@ -96,12 +96,31 @@ fn may_read_server_files() -> bool {
 
 pub struct LinderaModel {
     tokenizer: Tokenizer,
+    requires_server_file_privs: bool,
+}
+
+fn require_server_file_privileges() {
+    if !may_read_server_files() {
+        raise_error(
+            PgSqlErrorCode::ERRCODE_INSUFFICIENT_PRIVILEGE,
+            "permission denied to load a Lindera dictionary from a file",
+            Some(
+                "Only roles with privileges of the \"pg_read_server_files\" role may use \
+                 Lindera dictionary or user dictionary paths."
+                    .into(),
+            ),
+            Some("Use an embedded:// dictionary."),
+        );
+    }
 }
 
 impl LinderaModel {
     // Every load goes through here: creation, the first use in a backend (from
     // the catalog, which also covers rows written directly) and preload.
-    // Authorization applies to loading; an already loaded object is reused.
+    // Authorization applies to loading; preloaded models were approved and
+    // loaded by the postmaster, an already loaded tokenizer is reused, and
+    // building a tokenizer against a session-cached file-backed model re-checks
+    // server-file privileges via check_load_privileges().
     pub fn new(config: &LinderaConfig) -> Self {
         let config = config.tokenizer_config().unwrap_or_else(|e| {
             raise_error(
@@ -111,39 +130,44 @@ impl LinderaModel {
                 None,
             )
         });
+        let reads_files = reads_server_files(&config);
         let privileged = may_read_server_files();
-        if !privileged && reads_server_files(&config) {
-            raise_error(
-                PgSqlErrorCode::ERRCODE_INSUFFICIENT_PRIVILEGE,
-                "permission denied to load a Lindera dictionary from a file",
-                Some(
-                    "Only roles with privileges of the \"pg_read_server_files\" role may use \
-                     Lindera dictionary or user dictionary paths."
-                        .into(),
-                ),
-                Some("Use an embedded:// dictionary."),
-            );
+        if reads_files && !privileged {
+            require_server_file_privileges();
         }
         // Lindera errors can quote file names and file contents. Only roles
         // that may read server files anyway get the details.
-        Self::build(&config).unwrap_or_else(|e| {
+        let mut model = Self::build(&config).unwrap_or_else(|e| {
             raise_error(
                 PgSqlErrorCode::ERRCODE_INVALID_PARAMETER_VALUE,
                 "failed to load Lindera dictionary",
                 privileged.then(|| e.to_string()),
                 None,
             )
-        })
+        });
+        if unsafe { pg_sys::process_shared_preload_libraries_in_progress } {
+            model.requires_server_file_privs = false;
+        }
+        model
     }
 
     // Builds without the authorization check; callers must perform it first.
     fn build(config: &TokenizerConfig) -> lindera::LinderaResult<Self> {
+        let requires_server_file_privs = reads_server_files(config);
         let tokenizer = Tokenizer::from_config(config)?;
-        Ok(Self { tokenizer })
+        Ok(Self {
+            tokenizer,
+            requires_server_file_privs,
+        })
     }
 }
 
 impl TokenizerModel for LinderaModel {
+    fn check_load_privileges(&self) {
+        if self.requires_server_file_privs {
+            require_server_file_privileges();
+        }
+    }
     fn apply(&self, token: String) -> Vec<u32> {
         crate::budget::piece(token.len());
         self.tokenizer
@@ -152,6 +176,27 @@ impl TokenizerModel for LinderaModel {
             .into_iter()
             .filter_map(|t| token_id(t.word_id))
             .collect()
+    }
+
+    fn apply_str_to_i32(
+        &self,
+        text: &str,
+        _tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+        budget: &mut crate::budget::Output,
+    ) {
+        limits.check_piece(text.len());
+        let tokens = self.tokenizer.tokenize(text).unwrap();
+        out.reserve(tokens.len());
+        for (i, token) in tokens.into_iter().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
+            if let Some(id) = token_id(token.word_id) {
+                budget.ids(1);
+                // token_id() guarantees id < 2 * USER_DICTIONARY_ID_BASE <= i32::MAX.
+                out.push(id as i32);
+            }
+        }
     }
 }
 

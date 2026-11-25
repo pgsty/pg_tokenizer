@@ -46,11 +46,21 @@ impl TokenFilter for StopwordsTokenFilter {
     }
 
     fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
+        let mut i = 0usize;
         tokens.retain(|token| {
-            crate::utils::check_for_interrupts();
+            crate::utils::check_for_interrupts_every(i);
+            i += 1;
             !self.stopwords.contains(token.as_str())
         });
         tokens
+    }
+
+    fn apply_batch_with_limits(
+        &self,
+        tokens: Vec<String>,
+        _limits: crate::budget::Limits,
+    ) -> Vec<String> {
+        self.apply_batch(tokens)
     }
 }
 

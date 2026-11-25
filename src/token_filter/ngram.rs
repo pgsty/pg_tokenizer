@@ -50,15 +50,41 @@ pub struct Ngram {
     config: NgramConfig,
 }
 
-impl TokenFilter for Ngram {
-    fn apply(&self, token: String) -> Vec<String> {
+impl Ngram {
+    fn push_ngrams(
+        &self,
+        token: String,
+        bounds: &mut Vec<usize>,
+        budget: &mut crate::budget::Output,
+        results: &mut Vec<String>,
+    ) {
         let min_gram = self.config.min_gram;
         let max_gram = self.config.max_gram;
-        let mut budget = crate::budget::Output::default();
+        let ascii = token.as_bytes().chunks(1024).enumerate().all(|(i, chunk)| {
+            if i != 0 {
+                crate::utils::check_for_interrupts();
+            }
+            chunk.is_ascii()
+        });
+        if ascii {
+            let chars = token.len();
+            for start in 0..(chars + 1).saturating_sub(min_gram) {
+                for end in (start + min_gram)..=(start + max_gram).min(chars) {
+                    budget.text(end - start);
+                    results.push(token[start..end].to_string());
+                    crate::utils::check_for_interrupts_every(results.len());
+                }
+            }
+            if self.config.preserve_original && !(min_gram..=max_gram).contains(&chars) {
+                budget.text(token.len());
+                results.push(token);
+            }
+            return;
+        }
         // N-grams count characters (Unicode scalar values), not bytes.
         // Do not collect an iterator with a large size hint: Vec could reserve
         // its whole offset array before the first budget check runs.
-        let mut bounds = Vec::new();
+        bounds.clear();
         budget.workspace(std::mem::size_of::<usize>());
         for (i, (offset, _)) in token.char_indices().enumerate() {
             crate::utils::check_for_interrupts_every(i);
@@ -67,7 +93,6 @@ impl TokenFilter for Ngram {
         }
         bounds.push(token.len());
         let chars = bounds.len() - 1;
-        let mut results = Vec::new();
         // A token shorter than min_gram has no n-grams.
         for start in 0..(chars + 1).saturating_sub(min_gram) {
             for end in (start + min_gram)..=(start + max_gram).min(chars) {
@@ -81,6 +106,34 @@ impl TokenFilter for Ngram {
         if self.config.preserve_original && !(min_gram..=max_gram).contains(&chars) {
             budget.text(token.len());
             results.push(token);
+        }
+    }
+}
+
+impl TokenFilter for Ngram {
+    fn apply(&self, token: String) -> Vec<String> {
+        let mut budget = crate::budget::Output::default();
+        let mut bounds = Vec::new();
+        let mut results = Vec::new();
+        self.push_ngrams(token, &mut bounds, &mut budget, &mut results);
+        results
+    }
+
+    fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
+        self.apply_batch_with_limits(tokens, crate::budget::Limits::current())
+    }
+
+    fn apply_batch_with_limits(
+        &self,
+        tokens: Vec<String>,
+        limits: crate::budget::Limits,
+    ) -> Vec<String> {
+        let mut budget = crate::budget::Output::new(limits);
+        let mut bounds = Vec::new();
+        let mut results = Vec::with_capacity(tokens.len());
+        for (i, token) in tokens.into_iter().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
+            self.push_ngrams(token, &mut bounds, &mut budget, &mut results);
         }
         results
     }
@@ -144,7 +197,7 @@ mod tests {
         let (grams, checks) =
             count_interrupt_checks(|| ngram(1, 1, false).apply("a".repeat(10_000)));
         assert_eq!(grams.len(), 10_000);
-        assert!(checks >= 10_000 / 1024); // both input offsets and output are interruptible
+        assert_eq!(checks, 2 * (10_000 / 1024));
     }
 
     #[test]

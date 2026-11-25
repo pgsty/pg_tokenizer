@@ -57,36 +57,44 @@ impl TextAnalyzer {
         }
     }
 
+    #[inline]
+    pub(crate) fn is_identity(&self) -> bool {
+        self.character_filters.is_empty()
+            && self.pre_tokenizer.is_none()
+            && self.token_filters.is_empty()
+    }
+
     pub fn apply(&self, text: &str) -> Vec<String> {
-        crate::budget::input(text.len());
+        self.apply_with_limits(text, crate::budget::Limits::current())
+    }
+
+    pub(crate) fn apply_with_limits(
+        &self,
+        text: &str,
+        limits: crate::budget::Limits,
+    ) -> Vec<String> {
+        limits.check_input(text.len());
         // Let a statement timeout or cancel stop the pipeline between stages;
-        // token filters also check per token.
+        // character filters and token filters also check periodically.
         let mut text = Cow::Borrowed(text);
         for filter in &self.character_filters {
             check_for_interrupts();
-            filter.apply(&mut text);
+            filter.apply_with_limits(&mut text, limits);
         }
 
         check_for_interrupts();
-        let text = text.as_ref();
-        let pre_tokenized = match &self.pre_tokenizer {
-            Some(pre_tokenizer) => pre_tokenizer.pre_tokenize(text),
-            None => vec![text],
+        let mut tokens = match &self.pre_tokenizer {
+            Some(pre_tokenizer) => pre_tokenizer.pre_tokenize_owned(text.as_ref(), limits),
+            None => {
+                let mut budget = crate::budget::Output::new(limits);
+                budget.text(text.len());
+                vec![text.into_owned()]
+            }
         };
-        check_for_interrupts();
-        let mut budget = crate::budget::Output::default();
-        let mut tokens = pre_tokenized
-            .into_iter()
-            .map(|s| {
-                budget.text(s.len());
-                s.to_string()
-            })
-            .collect::<Vec<_>>();
 
         for filter in &self.token_filters {
             check_for_interrupts();
-            tokens = filter.apply_batch(tokens);
-            crate::budget::text(&tokens);
+            tokens = filter.apply_batch_with_limits(tokens, limits);
         }
 
         tokens
@@ -194,4 +202,96 @@ fn drop_text_analyzer(name: &str) {
 fn apply_text_analyzer(text: &str, text_analyzer_name: &str) -> Vec<String> {
     let text_analyzer = get_text_analyzer(text_analyzer_name);
     text_analyzer.apply(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TextAnalyzer;
+    use crate::budget::Limits;
+    use crate::character_filter::CharacterFilter;
+    use crate::pre_tokenizer::PreTokenizer;
+    use crate::token_filter::TokenFilter;
+    use std::borrow::Cow;
+    use std::sync::Arc;
+
+    struct Spaces;
+    impl CharacterFilter for Spaces {
+        fn apply(&self, text: &mut Cow<str>) {
+            *text = Cow::Owned(text.replace('_', " "));
+        }
+    }
+
+    struct Words;
+    impl PreTokenizer for Words {
+        fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
+            text.split_whitespace().collect()
+        }
+    }
+
+    struct ReverseAndJoin;
+    impl TokenFilter for ReverseAndJoin {
+        fn apply(&self, _: String) -> Vec<String> {
+            panic!("analyzer bypassed the batch override");
+        }
+
+        fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
+            let phrase = tokens.join(" ");
+            tokens.reverse();
+            tokens.push(phrase);
+            tokens
+        }
+    }
+
+    fn analyzer() -> TextAnalyzer {
+        TextAnalyzer {
+            character_filters: vec![Arc::new(Spaces)],
+            pre_tokenizer: Some(Arc::new(Words)),
+            token_filters: vec![Arc::new(ReverseAndJoin)],
+        }
+    }
+
+    #[test]
+    fn legacy_filters_preserve_batch_output_at_exact_limits() {
+        let limits = Limits {
+            tokens: 3,
+            output: 3 * size_of::<String>() + 13,
+            ..Limits::current()
+        };
+        assert_eq!(
+            analyzer().apply_with_limits("one_two", limits),
+            ["two", "one", "one two"]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "max_output_tokens")]
+    fn legacy_batch_override_checks_token_count() {
+        let limits = Limits {
+            tokens: 2,
+            ..Limits::current()
+        };
+        analyzer().apply_with_limits("one_two", limits);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_output_bytes")]
+    fn legacy_batch_override_checks_all_output_bytes() {
+        let limits = Limits {
+            output: 3 * size_of::<String>() + 12,
+            ..Limits::current()
+        };
+        analyzer().apply_with_limits("one_two", limits);
+    }
+
+    #[test]
+    #[should_panic(expected = "max_output_bytes")]
+    fn legacy_character_output_checked_before_pre_tokenization() {
+        let mut analyzer = analyzer();
+        analyzer.token_filters.clear();
+        let limits = Limits {
+            output: 3,
+            ..Limits::current()
+        };
+        analyzer.apply_with_limits("____", limits);
+    }
 }

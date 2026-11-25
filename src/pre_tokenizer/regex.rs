@@ -32,4 +32,9 @@ impl PreTokenizer for RegexPreTokenizer {
         crate::budget::piece(text.len());
         crate::budget::borrowed(self.pattern.find_iter(text).map(|m| m.as_str()))
     }
+
+    fn pre_tokenize_owned(&self, text: &str, limits: crate::budget::Limits) -> Vec<String> {
+        limits.check_piece(text.len());
+        crate::budget::owned(self.pattern.find_iter(text).map(|m| m.as_str()), limits)
+    }
 }

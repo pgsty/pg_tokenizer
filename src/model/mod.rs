@@ -27,8 +27,38 @@ use serde::{Deserialize, Serialize};
 
 use crate::utils::{catalog_one, invalid_config};
 
+#[inline]
+pub(crate) fn u32_to_i32_token_id(id: u32, tokenizer_name: &str) -> i32 {
+    i32::try_from(id).unwrap_or_else(|_| {
+        crate::utils::raise_error(
+            pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE,
+            format!(
+                "token ID {id} of tokenizer \"{tokenizer_name}\" is out of range for type integer"
+            ),
+            None,
+            Some("Recreate the model with token IDs not greater than 2147483647."),
+        )
+    })
+}
+
+pub(crate) fn push_u32_ids_as_i32(
+    ids: &[u32],
+    tokenizer_name: &str,
+    out: &mut Vec<i32>,
+    budget: &mut crate::budget::Output,
+) {
+    budget.ids(ids.len());
+    out.reserve(ids.len());
+    for (i, &id) in ids.iter().enumerate() {
+        crate::utils::check_for_interrupts_every(i);
+        out.push(u32_to_i32_token_id(id, tokenizer_name));
+    }
+}
+
 pub trait TokenizerModel {
     fn apply(&self, token: String) -> Vec<u32>;
+
+    fn check_load_privileges(&self) {}
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
         let mut budget = crate::budget::Output::default();
@@ -41,25 +71,70 @@ pub trait TokenizerModel {
         }
         ids
     }
+
+    fn apply_str_to_i32(
+        &self,
+        text: &str,
+        tokenizer_name: &str,
+        _limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+        budget: &mut crate::budget::Output,
+    ) {
+        let output = self.apply(text.to_owned());
+        push_u32_ids_as_i32(&output, tokenizer_name, out, budget);
+    }
+
+    fn apply_batch_to_i32(
+        &self,
+        tokens: Vec<String>,
+        tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+    ) {
+        let mut budget = crate::budget::Output::new(limits);
+        for token in tokens {
+            crate::utils::check_for_interrupts();
+            self.apply_str_to_i32(&token, tokenizer_name, limits, out, &mut budget);
+        }
+    }
 }
 pub type TokenizerModelPtr = Arc<dyn TokenizerModel + Send + Sync>;
 
+fn check_hf_padding_budget(tokenizer: &tokenizers::Tokenizer, limits: crate::budget::Limits) {
+    if let Some(padding) = tokenizer.get_padding() {
+        if let tokenizers::PaddingStrategy::Fixed(length) = padding.strategy {
+            limits.check_tokens(length);
+            limits.check_bytes(length.saturating_mul(96 + padding.pad_token.len()));
+        }
+        if let Some(multiple) = padding.pad_to_multiple_of {
+            limits.check_tokens(multiple);
+            limits.check_bytes(multiple.saturating_mul(96 + padding.pad_token.len()));
+        }
+    }
+}
+
 impl TokenizerModel for tokenizers::Tokenizer {
     fn apply(&self, token: String) -> Vec<u32> {
-        crate::budget::piece(token.len());
-        if let Some(padding) = self.get_padding() {
-            if let tokenizers::PaddingStrategy::Fixed(length) = padding.strategy {
-                crate::budget::tokens(length);
-                crate::budget::bytes(length.saturating_mul(96 + padding.pad_token.len()));
-            }
-            if let Some(multiple) = padding.pad_to_multiple_of {
-                crate::budget::tokens(multiple);
-                crate::budget::bytes(multiple.saturating_mul(96 + padding.pad_token.len()));
-            }
-        }
+        let limits = crate::budget::Limits::current();
+        limits.check_piece(token.len());
+        check_hf_padding_budget(self, limits);
         let encoded = self.encode_fast(token, false).unwrap();
-        crate::budget::Output::default().ids(encoded.get_ids().len());
+        crate::budget::Output::new(limits).ids(encoded.get_ids().len());
         encoded.get_ids().to_vec()
+    }
+
+    fn apply_str_to_i32(
+        &self,
+        text: &str,
+        tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+        budget: &mut crate::budget::Output,
+    ) {
+        limits.check_piece(text.len());
+        check_hf_padding_budget(self, limits);
+        let encoded = self.encode_fast(text, false).unwrap();
+        push_u32_ids_as_i32(encoded.get_ids(), tokenizer_name, out, budget);
     }
 }
 
@@ -69,6 +144,19 @@ impl TokenizerModel for tocken::tokenizer::Tokenizer {
         let ids = self.tokenize(&token);
         crate::budget::tokens(ids.len());
         ids
+    }
+
+    fn apply_str_to_i32(
+        &self,
+        text: &str,
+        tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+        budget: &mut crate::budget::Output,
+    ) {
+        limits.check_piece(text.len());
+        let ids = self.tokenize(text);
+        push_u32_ids_as_i32(&ids, tokenizer_name, out, budget);
     }
 }
 
@@ -118,6 +206,7 @@ pub fn get_model(name: &str) -> TokenizerModelPtr {
 
 pub(super) fn clear_cache() {
     MODEL_OBJECT_POOL.clear();
+    custom::clear_cache();
 }
 
 fn get_model_from_database(name: &str) -> Option<TokenizerModelPtr> {

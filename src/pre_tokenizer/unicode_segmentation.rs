@@ -16,4 +16,8 @@ impl PreTokenizer for UnicodeSegmentationPretokenizer {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
         crate::budget::borrowed(text.unicode_words())
     }
+
+    fn pre_tokenize_owned(&self, text: &str, limits: crate::budget::Limits) -> Vec<String> {
+        crate::budget::owned(text.unicode_words(), limits)
+    }
 }

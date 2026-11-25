@@ -58,10 +58,18 @@ impl TokenFilter for SynonymTokenFilter {
         }
     }
 
-    fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
-        let mut budget = crate::budget::Output::default();
-        for token in tokens.iter_mut() {
-            crate::utils::check_for_interrupts();
+    fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
+        self.apply_batch_with_limits(tokens, crate::budget::Limits::current())
+    }
+
+    fn apply_batch_with_limits(
+        &self,
+        mut tokens: Vec<String>,
+        limits: crate::budget::Limits,
+    ) -> Vec<String> {
+        let mut budget = crate::budget::Output::new(limits);
+        for (i, token) in tokens.iter_mut().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
             if let Some(synonym) = self.synonyms.get(token.as_str()) {
                 budget.text(synonym.len());
                 token.clone_from(synonym);

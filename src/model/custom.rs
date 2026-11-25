@@ -6,8 +6,10 @@
 // Copyright (c) 2026 PGSTY PTE. LTD.
 // Maintained by Ruohang Feng @ PGSTY (rh@vonng.com)
 
-use std::collections::HashMap;
-use std::ffi::CStr;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
+use std::ffi::{CStr, CString};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use pgrx::pg_sys::errcodes::PgSqlErrorCode;
@@ -15,13 +17,128 @@ use pgrx::pg_sys::panic::ErrorReportable;
 use pgrx::pg_sys::{self};
 use pgrx::prelude::PgHeapTuple;
 use pgrx::spi::{quote_identifier, quote_literal};
-use pgrx::{IntoDatum, WhoAllocated};
+use pgrx::{FromDatum, IntoDatum, WhoAllocated};
 use serde::{Deserialize, Serialize};
 
+use crate::cache::{SysCacheId, EXTENSION_CACHE_ID};
 use crate::text_analyzer::get_text_analyzer;
-use crate::utils::{catalog_one, invalid_config, raise_error, read_only_rows, spi_get_one};
+use crate::utils::{invalid_config, raise_error, spi_get_one, KeptPlan};
 
 use super::{validate_new_model_name, ModelConfig, TokenizerModel, MODEL_OBJECT_POOL};
+
+const ADVISORY_LOCK_NAMESPACE: i32 = 1885828203;
+
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+enum VocabQuery {
+    LookupOne,
+    LookupMany,
+    Missing,
+    Insert,
+}
+
+impl VocabQuery {
+    fn prepare(self, table: &str) -> KeptPlan {
+        let known = || {
+            format!("WITH known AS MATERIALIZED (SELECT token FROM {table} WHERE token = ANY($1))")
+        };
+        let missing = "NOT EXISTS (SELECT 1 FROM known WHERE known.token = t.token)";
+        let (sql, argtype) = match self {
+            Self::LookupOne => (
+                format!(
+                    r#"SELECT id, token COLLATE pg_catalog."C" = $1 FROM {table} WHERE token = $1"#
+                ),
+                pg_sys::TEXTOID,
+            ),
+            Self::LookupMany => (
+                format!("SELECT id, token FROM {table} WHERE token = ANY($1)"),
+                pg_sys::TEXTARRAYOID,
+            ),
+            // The typed NULL carries the unique token column's collation into DISTINCT ON.
+            Self::Missing => (
+                format!(
+                    r#"{known} SELECT DISTINCT ON (coalesce(t.token, (NULL::{table}).token)) t.token, {rel}::pg_catalog.regclass::pg_catalog.oid::pg_catalog.int4
+                    FROM pg_catalog.unnest($1) AS t(token)
+                    WHERE {missing}
+                    ORDER BY coalesce(t.token, (NULL::{table}).token), t.token COLLATE pg_catalog."C""#,
+                    rel = quote_literal(table),
+                    known = known()
+                ),
+                pg_sys::TEXTARRAYOID,
+            ),
+            Self::Insert => (
+                format!(
+                    r#"{known} INSERT INTO {table} (token) SELECT t.token FROM pg_catalog.unnest($1) AS t(token)
+                         WHERE {missing} ORDER BY t.token COLLATE pg_catalog."C"
+                         ON CONFLICT (token) DO NOTHING"#,
+                    known = known()
+                ),
+                pg_sys::TEXTARRAYOID,
+            ),
+        };
+        KeptPlan::prepare(&CString::new(sql).unwrap(), &[argtype])
+    }
+}
+
+type VocabPlans = HashMap<String, HashMap<VocabQuery, Rc<KeptPlan>>>;
+
+thread_local! {
+    static REGISTERED: Cell<bool> = const { Cell::new(false) };
+    static INVALIDATED: Cell<bool> = const { Cell::new(false) };
+    static VOCAB_PLANS: RefCell<VocabPlans> = RefCell::default();
+}
+
+#[pgrx::pg_guard]
+unsafe extern "C-unwind" fn on_custom_relcache_inval(_arg: pg_sys::Datum, _relid: pg_sys::Oid) {
+    INVALIDATED.set(true);
+}
+
+#[pgrx::pg_guard]
+unsafe extern "C-unwind" fn on_custom_syscache_inval(
+    _arg: pg_sys::Datum,
+    _cacheid: SysCacheId,
+    _hashvalue: u32,
+) {
+    INVALIDATED.set(true);
+}
+
+pub(super) fn clear_cache() {
+    VOCAB_PLANS.with(|p| p.borrow_mut().clear());
+}
+
+fn vocab_plan(name: &str, query: VocabQuery) -> Rc<KeptPlan> {
+    if !REGISTERED.replace(true) {
+        unsafe {
+            pg_sys::CacheRegisterRelcacheCallback(Some(on_custom_relcache_inval), 0usize.into());
+            for id in [
+                pg_sys::SysCacheIdentifier::NAMESPACENAME as SysCacheId,
+                EXTENSION_CACHE_ID,
+            ] {
+                pg_sys::CacheRegisterSyscacheCallback(
+                    id,
+                    Some(on_custom_syscache_inval),
+                    0usize.into(),
+                );
+            }
+        }
+    }
+    if INVALIDATED.replace(false) {
+        clear_cache();
+    }
+    if crate::cache::membership_ddl_active() {
+        return Rc::new(query.prepare(&vocabulary_table(name)));
+    }
+    if let Some(plan) = VOCAB_PLANS.with(|p| p.borrow().get(name)?.get(&query).cloned()) {
+        return plan;
+    }
+    let plan = Rc::new(query.prepare(&vocabulary_table(name)));
+    VOCAB_PLANS.with(|p| {
+        p.borrow_mut()
+            .entry(name.to_owned())
+            .or_default()
+            .insert(query, Rc::clone(&plan))
+    });
+    plan
+}
 
 #[derive(Debug)]
 pub struct CustomModel {
@@ -60,74 +177,97 @@ fn lock_model_catalog() {
     pgrx::Spi::run("LOCK TABLE tokenizer_catalog.model IN ROW EXCLUSIVE MODE").unwrap();
 }
 
-// Vocabulary lookups normally keep pgrx's SPI mode: once a writer has an XID it
-// is read-write, so READ COMMITTED gets a fresh snapshot that sees IDs other
-// writers committed after the statement began (the target-column trigger
-// relies on this). A parallel operation cannot write, and PostgreSQL rejects
-// read-write SPI there because it advances the command counter. Read under the
-// query's own snapshot instead, as the leader and every worker share it.
-fn parallel_lookup() -> bool {
-    unsafe { pg_sys::IsInParallelMode() }
-}
-
 impl TokenizerModel for CustomModel {
     fn apply(&self, text: String) -> Vec<u32> {
-        let query = format!(
-            "SELECT id FROM {} WHERE token = $1",
-            vocabulary_table(&self.name)
-        );
-        let parallel = parallel_lookup();
-
-        // The vocabulary stores long tokens as pieces; look up the same pieces.
+        let plan = vocab_plan(&self.name, VocabQuery::LookupOne);
         split_long_token(text)
             .into_iter()
-            .filter_map(|piece| {
-                if parallel {
-                    catalog_one::<i32>(&query, &[piece.into()])
-                } else {
-                    spi_get_one::<i32>(&query, &[piece.into()])
-                }
-            })
-            .map(|id| u32::try_from(id).unwrap())
+            .filter_map(|piece| plan.execute_one::<i32>(&[piece.as_str().into()], true))
+            .map(|id| u32::try_from(id).expect("id is not a valid u32"))
             .collect()
     }
 
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<u32> {
         let tokens = split_long_tokens(tokens);
-        let query = format!(
-            "SELECT id, token FROM {} WHERE token = ANY($1)",
-            vocabulary_table(&self.name)
-        );
+        let slices: Vec<_> = tokens.iter().map(String::as_str).collect();
+        let mut ids = Vec::with_capacity(slices.len());
+        self.lookup_batch(&slices, |id| ids.push(id as u32));
+        ids
+    }
 
-        let mut token_map = HashMap::new();
-        let mut insert = |id: Option<i32>, token: Option<String>| {
-            let id = u32::try_from(id.expect("no id value")).expect("id is not a valid u32");
-            token_map.insert(token.expect("no token value"), id);
-        };
-        if parallel_lookup() {
-            read_only_rows(&query, &[tokens.clone().into()], 0, |row| {
-                insert(row.get(1), row.get(2))
-            });
-        } else {
-            pgrx::Spi::connect(|client| {
-                let tuptable = client
-                    .select(&query, None, &[tokens.clone().into()])
-                    .unwrap_or_report();
-                for (i, tup) in tuptable.enumerate() {
-                    crate::utils::check_for_interrupts_every(i);
-                    insert(tup.get(1).unwrap_or_report(), tup.get(2).unwrap_or_report());
+    fn apply_str_to_i32(
+        &self,
+        text: &str,
+        _tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+        budget: &mut crate::budget::Output,
+    ) {
+        if text.len() <= MAX_TOKEN_LENGTH {
+            let plan = vocab_plan(&self.name, VocabQuery::LookupOne);
+            plan.execute_each(&[text.into()], true, 1, |row| {
+                // Batch lookup maps stored spellings back to input by byte equality.
+                if row.get::<bool>(2) == Some(true) {
+                    let id = row.get::<i32>(1).expect("no id value");
+                    assert!(id >= 0, "id is not a valid u32");
+                    budget.ids(1);
+                    out.push(id);
                 }
             });
+            return;
         }
+        let pieces = split_pieces(text, limits, |s| s);
+        self.lookup_batch(&pieces, |id| {
+            budget.ids(1);
+            out.push(id);
+        });
+    }
 
-        tokens
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, token)| {
-                crate::utils::check_for_interrupts_every(i);
-                token_map.get(&token).copied()
-            })
-            .collect()
+    fn apply_batch_to_i32(
+        &self,
+        tokens: Vec<String>,
+        _tokenizer_name: &str,
+        limits: crate::budget::Limits,
+        out: &mut Vec<i32>,
+    ) {
+        let tokens = split_long_tokens(tokens);
+        let slices: Vec<_> = tokens.iter().map(String::as_str).collect();
+        let mut budget = crate::budget::Output::new(limits);
+        out.reserve(slices.len());
+        self.lookup_batch(&slices, |id| {
+            budget.ids(1);
+            out.push(id);
+        });
+    }
+}
+
+fn distinct_tokens<'a>(tokens: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
+    let mut seen = HashSet::with_capacity(tokens.size_hint().0);
+    tokens
+        .enumerate()
+        .filter_map(|(i, token)| {
+            crate::utils::check_for_interrupts_every(i);
+            seen.insert(token).then_some(token)
+        })
+        .collect()
+}
+
+impl CustomModel {
+    fn lookup_batch(&self, tokens: &[&str], mut emit: impl FnMut(i32)) {
+        let plan = vocab_plan(&self.name, VocabQuery::LookupMany);
+        let distinct = distinct_tokens(tokens.iter().copied());
+        let mut ids = HashMap::with_capacity(distinct.len());
+        plan.execute_each(&[distinct.into()], true, 0, |row| {
+            let id = row.get::<i32>(1).expect("no id value");
+            assert!(id >= 0, "id is not a valid u32");
+            ids.insert(row.get::<String>(2).expect("no token value"), id);
+        });
+        for (i, &token) in tokens.iter().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
+            if let Some(&id) = ids.get(token) {
+                emit(id);
+            }
+        }
     }
 }
 
@@ -366,11 +506,19 @@ fn split_long_token(token: String) -> Vec<String> {
     if token.len() <= MAX_TOKEN_LENGTH {
         return vec![token];
     }
-    let mut budget = crate::budget::Output::default();
+    split_pieces(&token, crate::budget::Limits::current(), str::to_owned)
+}
+
+fn split_pieces<'a, T>(
+    token: &'a str,
+    limits: crate::budget::Limits,
+    piece_value: impl Fn(&'a str) -> T,
+) -> Vec<T> {
+    let mut budget = crate::budget::Output::new(limits);
     let capacity = token.len().div_ceil(MAX_TOKEN_LENGTH - 3);
     budget.workspace(capacity.saturating_mul(std::mem::size_of::<String>()));
     let mut pieces = Vec::with_capacity(capacity);
-    let mut rest = token.as_str();
+    let mut rest = token;
     while rest.len() > MAX_TOKEN_LENGTH {
         // A character is at most 4 bytes, so a boundary exists in the last 4.
         let end = (MAX_TOKEN_LENGTH - 3..=MAX_TOKEN_LENGTH)
@@ -380,11 +528,11 @@ fn split_long_token(token: String) -> Vec<String> {
         let (piece, tail) = rest.split_at(end);
         budget.text(piece.len());
         crate::utils::check_for_interrupts_every(pieces.len());
-        pieces.push(piece.to_string());
+        pieces.push(piece_value(piece));
         rest = tail;
     }
     budget.text(rest.len());
-    pieces.push(rest.to_string());
+    pieces.push(piece_value(rest));
     pieces
 }
 
@@ -404,8 +552,7 @@ fn split_long_tokens(tokens: Vec<String>) -> Vec<String> {
     pieces
 }
 
-#[pgrx::pg_extern(volatile, parallel_safe)]
-fn apply_text_analyzer_for_custom_model(text: &str, text_analyzer_name: &str) -> Vec<String> {
+fn analyze_tokens_for_custom_model(text: &str, text_analyzer_name: &str) -> Vec<String> {
     let text_analyzer = get_text_analyzer(text_analyzer_name);
     let tokens = text_analyzer.apply(text);
     if tokens.iter().any(|token| token.len() > MAX_TOKEN_LENGTH) {
@@ -414,6 +561,118 @@ fn apply_text_analyzer_for_custom_model(text: &str, text_analyzer_name: &str) ->
         );
     }
     split_long_tokens(tokens)
+}
+
+#[pgrx::pg_extern(volatile, parallel_safe)]
+fn apply_text_analyzer_for_custom_model(text: &str, text_analyzer_name: &str) -> Vec<String> {
+    analyze_tokens_for_custom_model(text, text_analyzer_name)
+}
+
+fn trigger_row<'a>(trigger: &'a pgrx::PgTrigger<'a>) -> pgrx::datum::DatumWithOid<'a> {
+    let row = trigger.new().expect("new tuple is missing");
+    let oid = row.composite_type_oid().expect("row type is missing");
+    // SAFETY: the OID comes from this exact composite tuple's descriptor.
+    unsafe { pgrx::datum::DatumWithOid::new(row, oid) }
+}
+
+fn trigger_select<T: FromDatum + IntoDatum>(
+    query: &str,
+    args: &[pgrx::datum::DatumWithOid],
+) -> Option<T> {
+    pgrx::Spi::connect_mut(|client| {
+        client
+            .update(query, Some(1), args)
+            .unwrap_or_report()
+            .first()
+            .get_one()
+            .unwrap_or_report()
+    })
+}
+
+fn matches_filter<'a>(trigger: &'a pgrx::PgTrigger<'a>, filter: &str) -> bool {
+    trigger_select(
+        &format!("SELECT ({filter}) IS TRUE FROM (SELECT ($1).*) AS document"),
+        &[trigger_row(trigger)],
+    )
+    .expect("IS TRUE returns a boolean")
+}
+
+fn extract_source_text<'a, M: WhoAllocated>(
+    trigger: &'a pgrx::PgTrigger<'a>,
+    new: &PgHeapTuple<'a, M>,
+    source_column: &str,
+) -> Option<String> {
+    let (idx, att) = new
+        .get_attribute_by_name(source_column)
+        .expect("source column is missing");
+    // Only text and varchar are binary-compatible with ::pg_catalog.text
+    // without value transformation (char(n) strips trailing spaces via cast).
+    if att.atttypid == pg_sys::TEXTOID || att.atttypid == pg_sys::VARCHAROID {
+        return new
+            .get_by_index::<String>(idx)
+            .expect("failed to read source column");
+    }
+    trigger_select(
+        &format!(
+            "SELECT (($1).{})::pg_catalog.text",
+            quote_identifier(source_column)
+        ),
+        &[trigger_row(trigger)],
+    )
+}
+
+#[pgrx::pg_trigger]
+fn custom_model_insert_trigger<'a>(
+    trigger: &'a pgrx::PgTrigger<'a>,
+) -> Result<Option<PgHeapTuple<'a, impl WhoAllocated>>, ()> {
+    let new = trigger.new().expect("new tuple is missing").into_owned();
+    let tg_argv = trigger.extra_args().expect("trigger arguments are missing");
+    if !(3..=4).contains(&tg_argv.len()) {
+        panic!("Invalid trigger arguments");
+    }
+    let model_name = &tg_argv[0];
+    let source_column = &tg_argv[1];
+    let text_analyzer_name = &tg_argv[2];
+
+    if let Some(filter) = tg_argv.get(3) {
+        if !matches_filter(trigger, filter) {
+            return Ok(Some(new));
+        }
+    }
+
+    let Some(source_text) = extract_source_text(trigger, &new, source_column) else {
+        return Ok(Some(new));
+    };
+
+    let tokens = analyze_tokens_for_custom_model(&source_text, text_analyzer_name);
+    if tokens.is_empty() {
+        return Ok(Some(new));
+    }
+
+    let distinct = distinct_tokens(tokens.iter().map(String::as_str));
+    let lookup = vocab_plan(model_name, VocabQuery::Missing);
+    let mut missing = Vec::new();
+    let mut oid = None;
+    lookup.execute_each(&[distinct.into()], false, 0, |row| {
+        missing.push(row.get::<String>(1).expect("no token value"));
+        if oid.is_none() {
+            oid = row.get::<i32>(2);
+        }
+    });
+    let Some(oid) = oid else {
+        return Ok(Some(new));
+    };
+    // The lookup holds a relation lock, so the model lock key is stable until commit.
+    unsafe {
+        pgrx::direct_function_call_as_datum(
+            pg_sys::pg_advisory_xact_lock_int4,
+            &[ADVISORY_LOCK_NAMESPACE.into_datum(), oid.into_datum()],
+        );
+    }
+
+    // A writer that committed while we waited may have supplied these tokens.
+    vocab_plan(model_name, VocabQuery::Insert).execute_void(&[missing.into()], false);
+    Ok(Some(new))
 }
 
 pgrx::extension_sql_file!("../sql/custom_model.sql", name = "custom_model_triggers");
@@ -486,43 +745,25 @@ fn custom_model_tokenizer_set_target_column_trigger<'a>(
     let tokenizer_name = &tg_argv[0];
     let source_column = &tg_argv[1];
     let target_column = &tg_argv[2];
-    let row = || {
-        let row = trigger.new().expect("new tuple is missing");
-        let oid = row.composite_type_oid().expect("row type is missing");
-        // SAFETY: the OID comes from this exact composite tuple's descriptor.
-        unsafe { pgrx::datum::DatumWithOid::new(row, oid) }
-    };
 
+    // Always re-evaluate this trigger's own predicate against its own NEW tuple;
+    // an intervening BEFORE trigger may have modified filter columns.
     if let Some(filter) = tg_argv.get(3) {
-        let matches = spi_get_one::<bool>(
-            &format!("SELECT ({filter}) IS TRUE FROM (SELECT ($1).*) AS document"),
-            &[row()],
-        )
-        .unwrap();
-        if !matches {
+        if !matches_filter(trigger, filter) {
             // Leave nonmatching rows untouched, including any existing embedding.
             return Ok(Some(new));
         }
     }
 
-    // A preceding vocabulary trigger may have waited for another transaction.
-    // Use a read-write SPI call so READ COMMITTED gets a fresh snapshot that can
-    // see that writer's committed IDs as well as our own newly inserted tokens.
-    // Read the source like model creation and the vocabulary trigger do, with
-    // a ::text cast, so non-text source columns such as char(n) work too. A
-    // NULL source gives a NULL result (tokenize is STRICT).
-    let query = format!(
-        "SELECT tokenizer_catalog.tokenize((($1).{})::pg_catalog.text, $2)",
-        quote_identifier(source_column)
+    // Read-write SPI sees preceding vocabulary inserts and commits after a lock wait.
+    let target: Option<Vec<i32>> = trigger_select(
+        &format!(
+            "SELECT tokenizer_catalog.tokenize((($1).{})::pg_catalog.text, $2)",
+            quote_identifier(source_column)
+        ),
+        &[trigger_row(trigger), tokenizer_name.as_str().into()],
     );
-    let target: Option<Vec<i32>> = pgrx::Spi::connect_mut(|client| {
-        client
-            .update(&query, Some(1), &[row(), tokenizer_name.as_str().into()])
-            .unwrap_or_report()
-            .first()
-            .get_one()
-            .unwrap_or_report()
-    });
+
     let (idx, att) = new
         .get_attribute_by_name(target_column)
         .expect("target column is missing");

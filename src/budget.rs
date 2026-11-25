@@ -12,15 +12,16 @@ use std::sync::OnceLock;
 static REPORT: OnceLock<fn(&str, usize) -> !> = OnceLock::new();
 static LIMITS: OnceLock<fn() -> Limits> = OnceLock::new();
 
-struct Limits {
-    input: usize,
-    tokens: usize,
-    output: usize,
-    piece: usize,
+#[derive(Clone, Copy)]
+pub struct Limits {
+    pub(crate) input: usize,
+    pub(crate) tokens: usize,
+    pub(crate) output: usize,
+    pub(crate) piece: usize,
 }
 
 impl Limits {
-    fn current() -> Self {
+    pub(crate) fn current() -> Self {
         LIMITS.get().map_or(
             Self {
                 input: 16 * 1024 * 1024,
@@ -30,6 +31,26 @@ impl Limits {
             },
             |read| read(),
         )
+    }
+
+    #[inline]
+    pub(crate) fn check_input(self, bytes: usize) {
+        check(bytes, self.input, "max_input_bytes");
+    }
+
+    #[inline]
+    pub(crate) fn check_piece(self, bytes: usize) {
+        check(bytes, self.piece, "max_piece_bytes");
+    }
+
+    #[inline]
+    pub(crate) fn check_bytes(self, bytes: usize) {
+        check(bytes, self.output, "max_output_bytes");
+    }
+
+    #[inline]
+    pub(crate) fn check_tokens(self, tokens: usize) {
+        check(tokens, self.tokens, "max_output_tokens");
     }
 }
 
@@ -102,6 +123,7 @@ fn check(value: usize, limit: usize, setting: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub fn input(bytes: usize) {
     check(bytes, Limits::current().input, "max_input_bytes");
 }
@@ -123,26 +145,36 @@ pub struct Output {
 
 impl Default for Output {
     fn default() -> Self {
-        Self {
-            count: 0,
-            bytes: 0,
-            limits: Limits::current(),
-        }
+        Self::new(Limits::current())
     }
 }
 
 impl Output {
+    #[inline]
+    pub(crate) fn new(limits: Limits) -> Self {
+        Self {
+            count: 0,
+            bytes: 0,
+            limits,
+        }
+    }
+
+    #[inline]
     pub fn workspace(&self, bytes: usize) {
         check(bytes, self.limits.output, "max_output_bytes");
     }
+
+    #[inline]
     pub fn text(&mut self, len: usize) {
         self.add(1, len.saturating_add(std::mem::size_of::<String>()));
     }
 
+    #[inline]
     pub fn ids(&mut self, count: usize) {
         self.add(count, count.saturating_mul(std::mem::size_of::<u32>()));
     }
 
+    #[inline]
     fn add(&mut self, count: usize, size: usize) {
         self.count = self.count.saturating_add(count);
         self.bytes = self.bytes.saturating_add(size);
@@ -162,6 +194,18 @@ pub fn borrowed<'a>(parts: impl Iterator<Item = &'a str>) -> Vec<&'a str> {
     result
 }
 
+pub(crate) fn owned<'a>(parts: impl Iterator<Item = &'a str>, limits: Limits) -> Vec<String> {
+    let mut budget = Output::new(limits);
+    let mut result = Vec::new();
+    for (i, part) in parts.enumerate() {
+        crate::utils::check_for_interrupts_every(i);
+        budget.text(part.len());
+        result.push(part.to_owned());
+    }
+    result
+}
+
+#[allow(dead_code)]
 pub fn text(parts: &[String]) {
     let mut budget = Output::default();
     for (i, part) in parts.iter().enumerate() {
@@ -170,9 +214,13 @@ pub fn text(parts: &[String]) {
     }
 }
 
-pub fn characters(chars: impl Iterator<Item = char>) -> String {
-    let mut result = String::new();
-    let limit = Limits::current().output;
+pub(crate) fn characters_with_capacity(
+    chars: impl Iterator<Item = char>,
+    capacity: usize,
+    limits: Limits,
+) -> String {
+    let limit = limits.output;
+    let mut result = String::with_capacity(capacity.min(limit));
     for (i, ch) in chars.enumerate() {
         crate::utils::check_for_interrupts_every(i);
         check(
@@ -183,4 +231,9 @@ pub fn characters(chars: impl Iterator<Item = char>) -> String {
         result.push(ch);
     }
     result
+}
+
+#[allow(dead_code)]
+pub fn characters(chars: impl Iterator<Item = char>) -> String {
+    characters_with_capacity(chars, 0, Limits::current())
 }

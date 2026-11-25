@@ -1,4 +1,4 @@
-"""Verify installed extension library symbols and generated install SQL parity."""
+"""Verify the installed extension library, install SQL, and migration scripts."""
 
 import argparse
 import difflib
@@ -95,11 +95,15 @@ def main():
         str(installed_sql),
     )
 
+    upgrades = sorted((ROOT / "sql" / "upgrade").glob("pg_tokenizer--*--*.sql"))
+    for upgrade in upgrades:
+        installed = installed_sql.parent / upgrade.name
+        if not installed.is_file() or installed.read_bytes() != upgrade.read_bytes():
+            raise SystemExit(f"Missing or incorrect installed migration: {installed}")
+
     library = find_library(pkglibdir)
     exported = exported_symbols(library)
-    sql_files = sorted((ROOT / "sql" / "install").glob("pg_tokenizer--*.sql")) + sorted(
-        (ROOT / "sql" / "upgrade").glob("pg_tokenizer--*--*.sql")
-    )
+    sql_files = sorted((ROOT / "sql" / "install").glob("pg_tokenizer--*.sql")) + upgrades
     referenced = referenced_symbols(sql_files)
     required = {"_PG_init", "Pg_magic_func"}
     for sym in referenced:
@@ -109,7 +113,7 @@ def main():
     if missing:
         raise SystemExit(f"Missing exported C symbols in {library}: {', '.join(missing)}")
     print(
-        f"Verified {installed_sql.name} parity and {len(referenced)} SQL C symbols "
+        f"Verified {installed_sql.name} parity, {len(upgrades)} migrations and {len(referenced)} SQL C symbols "
         f"({len(required)} exports) against {library}"
     )
 

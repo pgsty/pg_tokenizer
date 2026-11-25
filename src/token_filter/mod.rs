@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use skip_non_alphanumeric::SkipNonAlphanumeric;
 use stemmer::{StemmerKind, StemmerTokenFilter};
 
-use crate::utils::check_for_interrupts;
+use crate::utils::check_for_interrupts_every;
 
 pub trait TokenFilter {
     fn apply(&self, token: String) -> Vec<String>;
@@ -29,13 +29,28 @@ pub trait TokenFilter {
     fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
         let mut budget = crate::budget::Output::default();
         let mut results = Vec::with_capacity(tokens.len());
-        for token in tokens {
-            check_for_interrupts();
+        for (i, token) in tokens.into_iter().enumerate() {
+            check_for_interrupts_every(i);
             let output = self.apply(token);
             for token in &output {
                 budget.text(token.len());
             }
             results.extend(output);
+        }
+        results
+    }
+
+    #[doc(hidden)]
+    fn apply_batch_with_limits(
+        &self,
+        tokens: Vec<String>,
+        limits: crate::budget::Limits,
+    ) -> Vec<String> {
+        let results = self.apply_batch(tokens);
+        let mut budget = crate::budget::Output::new(limits);
+        for (i, token) in results.iter().enumerate() {
+            check_for_interrupts_every(i);
+            budget.text(token.len());
         }
         results
     }
@@ -102,11 +117,11 @@ mod tests {
     }
 
     #[test]
-    fn default_batch_checks_for_interrupts_per_token() {
+    fn default_batch_checks_for_interrupts_every_1024_tokens() {
         let tokens = vec!["a".to_string(); 3000];
         let (result, checks) = count_interrupt_checks(|| IdentityFilter.apply_batch(tokens));
         assert_eq!(result.len(), 3000);
-        assert_eq!(checks, 3000);
+        assert_eq!(checks, 3000usize.div_ceil(1024));
     }
 
     #[test]
@@ -120,7 +135,7 @@ mod tests {
             ])
         });
         assert_eq!(kept, ["hello", "世界"]);
-        assert_eq!(checks, 4);
+        assert_eq!(checks, 1);
 
         let stopwords = StopwordsTokenFilter::build("the\nand\n");
         let (kept, checks) = count_interrupt_checks(|| {
@@ -132,13 +147,18 @@ mod tests {
             ])
         });
         assert_eq!(kept, ["quick", "fox"]);
-        assert_eq!(checks, 4);
+        assert_eq!(checks, 1);
 
         let synonyms = SynonymTokenFilter::build("pg postgres postgresql\n");
         let (mapped, checks) = count_interrupt_checks(|| {
             synonyms.apply_batch(vec!["postgresql".into(), "db".into(), "postgres".into()])
         });
         assert_eq!(mapped, ["pg", "db", "pg"]);
-        assert_eq!(checks, 3);
+        assert_eq!(checks, 1);
+
+        let many = vec!["hello".to_string(); 2500];
+        let (kept, checks) = count_interrupt_checks(|| SkipNonAlphanumeric.apply_batch(many));
+        assert_eq!(kept.len(), 2500);
+        assert_eq!(checks, 2500usize.div_ceil(1024));
     }
 }

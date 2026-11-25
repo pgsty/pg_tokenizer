@@ -17,7 +17,7 @@ use crate::model::{get_model, TokenizerModelPtr};
 use crate::pre_tokenizer::PreTokenizerConfig;
 use crate::text_analyzer::{get_text_analyzer, TextAnalyzer, TextAnalyzerConfig, TextAnalyzerPtr};
 use crate::token_filter::TokenFilterConfig;
-use crate::utils::{catalog_one, invalid_config, raise_error};
+use crate::utils::{catalog_one, check_for_interrupts, invalid_config};
 
 #[derive(Clone, Serialize, Deserialize, Validate)]
 #[validate(schema(function = "TokenizerConfig::validate_text_analyzer"))]
@@ -69,6 +69,7 @@ impl Tokenizer {
         };
 
         let model = get_model(&config.model);
+        model.check_load_privileges();
 
         Tokenizer {
             text_analyzer,
@@ -76,9 +77,29 @@ impl Tokenizer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn tokenize(&self, text: &str) -> Vec<u32> {
         let tokens = self.text_analyzer.apply(text);
         self.model.apply_batch(tokens)
+    }
+
+    pub(crate) fn tokenize_i32(&self, text: &str, tokenizer_name: &str) -> Vec<i32> {
+        let limits = crate::budget::Limits::current();
+        let mut out = Vec::new();
+        if self.text_analyzer.is_identity() {
+            limits.check_input(text.len());
+            let mut stage_budget = crate::budget::Output::new(limits);
+            stage_budget.text(text.len());
+            check_for_interrupts();
+            let mut id_budget = crate::budget::Output::new(limits);
+            self.model
+                .apply_str_to_i32(text, tokenizer_name, limits, &mut out, &mut id_budget);
+        } else {
+            let tokens = self.text_analyzer.apply_with_limits(text, limits);
+            self.model
+                .apply_batch_to_i32(tokens, tokenizer_name, limits, &mut out);
+        }
+        out
     }
 }
 
@@ -188,25 +209,5 @@ fn drop_tokenizer(name: &str) {
 #[pgrx::pg_extern(stable, parallel_safe)]
 pub fn tokenize(text: &str, tokenizer_name: &str) -> Vec<i32> {
     let tokenizer = get_tokenizer(tokenizer_name);
-    let ids = tokenizer.tokenize(text);
-    let mut budget = crate::budget::Output::default();
-    budget.ids(ids.len());
-    // Hugging Face imports reject larger IDs; models stored before that check
-    // can still contain them.
-    ids.into_iter()
-        .enumerate()
-        .map(|(i, id)| {
-            crate::utils::check_for_interrupts_every(i);
-            i32::try_from(id).unwrap_or_else(|_| {
-                raise_error(
-                    pgrx::pg_sys::errcodes::PgSqlErrorCode::ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE,
-                    format!(
-                        "token ID {id} of tokenizer \"{tokenizer_name}\" is out of range for type integer"
-                    ),
-                    None,
-                    Some("Recreate the model with token IDs not greater than 2147483647."),
-                )
-            })
-        })
-        .collect()
+    tokenizer.tokenize_i32(text, tokenizer_name)
 }

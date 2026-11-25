@@ -53,10 +53,31 @@ struct JiebaSearch {
     enable_hmm: bool,
 }
 
+fn collect_jieba_owned(
+    words: Vec<jieba_rs::Token<'_>>,
+    limits: crate::budget::Limits,
+) -> Vec<String> {
+    limits.check_tokens(words.len());
+    let mut budget = crate::budget::Output::new(limits);
+    budget.workspace(words.len().saturating_mul(std::mem::size_of::<String>()));
+    let mut result = Vec::with_capacity(words.len());
+    for (i, token) in words.into_iter().enumerate() {
+        crate::utils::check_for_interrupts_every(i);
+        budget.text(token.word.len());
+        result.push(token.word.to_owned());
+    }
+    result
+}
+
 impl PreTokenizer for JiebaFull {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
         crate::budget::piece(text.len());
         crate::budget::borrowed(JIEBA.cut_all(text).into_iter().map(|t| t.word))
+    }
+
+    fn pre_tokenize_owned(&self, text: &str, limits: crate::budget::Limits) -> Vec<String> {
+        limits.check_piece(text.len());
+        collect_jieba_owned(JIEBA.cut_all(text), limits)
     }
 }
 
@@ -64,6 +85,11 @@ impl PreTokenizer for JiebaPrecise {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str> {
         crate::budget::piece(text.len());
         crate::budget::borrowed(JIEBA.cut(text, self.enable_hmm).into_iter().map(|t| t.word))
+    }
+
+    fn pre_tokenize_owned(&self, text: &str, limits: crate::budget::Limits) -> Vec<String> {
+        limits.check_piece(text.len());
+        collect_jieba_owned(JIEBA.cut(text, self.enable_hmm), limits)
     }
 }
 
@@ -76,6 +102,11 @@ impl PreTokenizer for JiebaSearch {
                 .into_iter()
                 .map(|t| t.word),
         )
+    }
+
+    fn pre_tokenize_owned(&self, text: &str, limits: crate::budget::Limits) -> Vec<String> {
+        limits.check_piece(text.len());
+        collect_jieba_owned(JIEBA.cut_for_search(text, self.enable_hmm), limits)
     }
 }
 

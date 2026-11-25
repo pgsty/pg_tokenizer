@@ -47,6 +47,7 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'pg_tokenizer definition version is missing';
     END IF;
+    PERFORM tokenizer_catalog._notify_catalog_changed();
     RETURN NULL;
 END;
 $body$;
@@ -66,9 +67,30 @@ CREATE TRIGGER definition_changed AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE
 CREATE TRIGGER definition_changed AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE
     ON tokenizer_catalog.synonym FOR EACH STATEMENT
     EXECUTE FUNCTION tokenizer_catalog._bump_definition_version();
+-- Row validators can load either image before the version update runs.
+CREATE TRIGGER definition_changing BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+    ON tokenizer_catalog.text_analyzer FOR EACH STATEMENT
+    EXECUTE FUNCTION tokenizer_catalog._notify_definition_version_changed();
+CREATE TRIGGER definition_changing BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+    ON tokenizer_catalog.tokenizer FOR EACH STATEMENT
+    EXECUTE FUNCTION tokenizer_catalog._notify_definition_version_changed();
+CREATE TRIGGER definition_changing BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+    ON tokenizer_catalog.model FOR EACH STATEMENT
+    EXECUTE FUNCTION tokenizer_catalog._notify_definition_version_changed();
+CREATE TRIGGER definition_changing BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+    ON tokenizer_catalog.stopwords FOR EACH STATEMENT
+    EXECUTE FUNCTION tokenizer_catalog._notify_definition_version_changed();
+CREATE TRIGGER definition_changing BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE
+    ON tokenizer_catalog.synonym FOR EACH STATEMENT
+    EXECUTE FUNCTION tokenizer_catalog._notify_definition_version_changed();
+CREATE TRIGGER definition_version_changed AFTER DELETE OR TRUNCATE
+    ON tokenizer_catalog.definition_version FOR EACH STATEMENT
+    EXECUTE FUNCTION tokenizer_catalog._notify_definition_version_changed();
 
 -- Readers need only this harmless counter, in addition to their existing ACLs.
 -- Exclude it from pg_dump config data: restored definitions bump a fresh row.
 REVOKE ALL ON tokenizer_catalog.definition_version FROM PUBLIC, pg_database_owner;
 GRANT SELECT ON tokenizer_catalog.definition_version TO PUBLIC;
-REVOKE EXECUTE ON FUNCTION tokenizer_catalog._bump_definition_version() FROM PUBLIC, pg_database_owner;
+REVOKE EXECUTE ON FUNCTION tokenizer_catalog._bump_definition_version(),
+    tokenizer_catalog._notify_catalog_changed(),
+    tokenizer_catalog._notify_definition_version_changed() FROM PUBLIC, pg_database_owner;

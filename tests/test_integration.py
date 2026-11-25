@@ -65,10 +65,12 @@ class IntegrationTests(unittest.TestCase):
             version = "1.0.0"
         elif "from_110" in self._testMethodName:
             version = "1.1.0"
+        elif "from_120" in self._testMethodName:
+            version = "1.2.0"
         elif "upgrade" in self._testMethodName:
             version = "0.1.1"
         else:
-            version = os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.2.0")
+            version = os.environ.get("PG_TOKENIZER_TEST_VERSION", "1.3.0")
         self.db.execute(
             sql.SQL("CREATE EXTENSION pg_tokenizer VERSION {}").format(
                 sql.Literal(version)
@@ -563,6 +565,50 @@ class IntegrationTests(unittest.TestCase):
         self.db.execute("INSERT INTO release_upgrade(body) VALUES ('delta alpha')")
         self.assert_embeddings(self.db, "release_upgrade")
 
+    def test_upgrade_from_120_preserves_definitions_and_views(self):
+        # Exercises the new 1.3.0 binary against un-upgraded 1.2.0 SQL first,
+        # including direct catalog DML + rollback, then upgrades in place.
+        self.make_model(self.db, "v120_model")
+        self.db.execute("INSERT INTO v120_model(body) VALUES ('alpha beta alpha'), ('gamma beta')")
+        self.db.execute(
+            "CREATE VIEW v120_view AS SELECT body, analyze_to_tsvector(body, 'v120_model') AS atsv, "
+            "tokenize_to_tsvector(body, 'v120_model') AS ttsv FROM v120_model ORDER BY body"
+        )
+        before_view = self.db.execute("SELECT body, atsv::text, ttsv::text FROM v120_view").fetchall()
+        # Direct DML + rollback on un-upgraded 1.2.0 SQL must still invalidate.
+        with self.connect() as conn:
+            self.assertEqual(
+                conn.execute("SELECT apply_text_analyzer('Alpha', 'v120_model')").fetchone()[0],
+                ["Alpha"],
+            )
+            conn.execute("BEGIN")
+            conn.execute(
+                "UPDATE tokenizer_catalog.text_analyzer SET config = '{\"character_filters\":[\"to_lowercase\"],\"pre_tokenizer\":\"unicode_segmentation\",\"token_filters\":[]}' WHERE name = 'v120_model'"
+            )
+            self.assertEqual(
+                conn.execute("SELECT apply_text_analyzer('Alpha', 'v120_model')").fetchone()[0],
+                ["alpha"],
+            )
+            conn.execute("ROLLBACK")
+            self.assertEqual(
+                conn.execute("SELECT apply_text_analyzer('Alpha', 'v120_model')").fetchone()[0],
+                ["Alpha"],
+            )
+
+        self.db.execute("ALTER EXTENSION pg_tokenizer UPDATE TO '1.3.0'")
+        self.assertEqual(
+            self.db.execute(
+                "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
+            ).fetchone()[0],
+            "1.3.0",
+        )
+        self.assertEqual(
+            before_view,
+            self.db.execute("SELECT body, atsv::text, ttsv::text FROM v120_view").fetchall(),
+        )
+        self.db.execute("INSERT INTO v120_model(body) VALUES ('delta alpha')")
+        self.assert_embeddings(self.db, "v120_model")
+
     def test_upgrade_from_010(self):
         self.make_model(self.db)
         self.db.execute("INSERT INTO race(body) VALUES ('alpha beta')")
@@ -574,7 +620,7 @@ class IntegrationTests(unittest.TestCase):
             self.db.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
             ).fetchone()[0],
-            "1.2.0",
+            "1.3.0",
         )
         self.assertEqual(
             self.db.execute("SELECT id, token FROM model_race ORDER BY id").fetchall(),
@@ -672,13 +718,13 @@ class IntegrationTests(unittest.TestCase):
             self.db.execute(
                 "SELECT extversion FROM pg_extension WHERE extname = 'pg_tokenizer'"
             ).fetchone()[0],
-            "1.2.0",
+            "1.3.0",
         )
         # All supported old versions have an upgrade path in standard pgrx packages.
         path = self.db.execute(
-            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.2.0'"
+            "SELECT path FROM pg_extension_update_paths('pg_tokenizer') WHERE source = '0.1.0' AND target = '1.3.0'"
         ).fetchone()[0]
-        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.1.0--1.2.0")
+        self.assertEqual(path, "0.1.0--0.1.1--1.0.0--1.1.0--1.2.0--1.3.0")
 
         # A fresh installation and an upgraded installation must expose the same
         # function signatures, defaults, volatility, language and implementation.
@@ -1652,6 +1698,473 @@ $$)""")
         self.assertEqual(self.db.execute(
             "SELECT config FROM tokenizer_catalog.stopwords WHERE name = 'lucene_english'"
         ).fetchone()[0], "custom")
+
+    def test_imported_snapshot_switches_cached_definitions(self):
+        # Same backend, no intervening writes: visible definition version moves
+        # newest -> older imported snapshot -> newest, so results must be
+        # abc -> ABC -> abc even though the shared epoch stays unchanged.
+        self.db.execute(
+            "SELECT create_text_analyzer('snap_a', 'pre_tokenizer = \"unicode_segmentation\"')"
+        )
+        with self.connect() as exporter, self.connect() as writer, self.connect() as reader:
+            exporter.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            snap_id = exporter.execute("SELECT pg_export_snapshot()").fetchone()[0]
+            try:
+                writer.execute(
+                    "UPDATE tokenizer_catalog.text_analyzer "
+                    "SET config = '{\"character_filters\":[\"to_lowercase\"],\"pre_tokenizer\":\"unicode_segmentation\",\"token_filters\":[]}' "
+                    "WHERE name = 'snap_a'"
+                )
+                self.assertEqual(
+                    reader.execute("SELECT apply_text_analyzer('ABC', 'snap_a')").fetchone()[0],
+                    ["abc"],
+                )
+                # Warm fast path on latest version before importing older snapshot.
+                self.assertEqual(
+                    reader.execute("SELECT apply_text_analyzer('ABC', 'snap_a')").fetchone()[0],
+                    ["abc"],
+                )
+                reader.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                reader.execute(
+                    sql.SQL("SET TRANSACTION SNAPSHOT {}").format(sql.Literal(snap_id))
+                )
+                self.assertEqual(
+                    reader.execute("SELECT apply_text_analyzer('ABC', 'snap_a')").fetchone()[0],
+                    ["ABC"],
+                )
+                reader.execute("COMMIT")
+                self.assertEqual(
+                    reader.execute("SELECT apply_text_analyzer('ABC', 'snap_a')").fetchone()[0],
+                    ["abc"],
+                )
+                self.assertEqual(
+                    reader.execute("SELECT apply_text_analyzer('ABC', 'snap_a')").fetchone()[0],
+                    ["abc"],
+                )
+            finally:
+                exporter.execute("ROLLBACK")
+
+    def test_unrelated_rollback_and_savepoint_preserve_model_cache(self):
+        hf_cfg = json.dumps({
+            "model": {"type": "WordLevel", "vocab": {"[UNK]": 0, "hello": 42}, "unk_token": "[UNK]"}
+        })
+        self.db.execute("SELECT create_huggingface_model('rb_hf', %s)", (hf_cfg,))
+        self.db.execute("SELECT create_tokenizer('rb_tok', 'model = \"rb_hf\"')")
+        self.db.execute(
+            "SELECT create_text_analyzer('rb_an', 'pre_tokenizer = \"unicode_segmentation\"')"
+        )
+        with self.connect() as conn:
+            # Warm cache and establish fast path.
+            self.assertEqual(conn.execute("SELECT tokenize('hello', 'rb_tok')").fetchone()[0], [42])
+            self.assertEqual(conn.execute("SELECT tokenize('hello', 'rb_tok')").fetchone()[0], [42])
+            conn.execute("SELECT pg_stat_force_next_flush()")
+            time.sleep(0.05)
+            model_scans_before = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_catalog.model'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('tokenizer_catalog.model_pkey'::regclass), 0)"
+            ).fetchone()[0]
+            defver_scans_before = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version_pkey'::regclass), 0)"
+            ).fetchone()[0]
+
+            # Unrelated rollbacks and savepoint rollbacks must NOT evict local caches.
+            for _ in range(5):
+                conn.execute("BEGIN")
+                self.assertEqual(conn.execute("SELECT tokenize('hello', 'rb_tok')").fetchone()[0], [42])
+                conn.execute("ROLLBACK")
+                self.assertEqual(conn.execute("SELECT tokenize('hello', 'rb_tok')").fetchone()[0], [42])
+
+                conn.execute("BEGIN")
+                conn.execute("SAVEPOINT sp")
+                conn.execute("SELECT 1")
+                conn.execute("ROLLBACK TO SAVEPOINT sp")
+                self.assertEqual(conn.execute("SELECT tokenize('hello', 'rb_tok')").fetchone()[0], [42])
+                conn.execute("COMMIT")
+
+            conn.execute("SELECT pg_stat_force_next_flush()")
+            time.sleep(0.05)
+            model_scans_after = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_catalog.model'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('tokenizer_catalog.model_pkey'::regclass), 0)"
+            ).fetchone()[0]
+            defver_scans_after = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version_pkey'::regclass), 0)"
+            ).fetchone()[0]
+            self.assertEqual(model_scans_after, model_scans_before)
+            self.assertEqual(defver_scans_after, defver_scans_before)
+
+            # Dirty savepoint rollback MUST invalidate and restore the committed definition.
+            conn.execute("BEGIN")
+            conn.execute("SAVEPOINT sp_dirty")
+            conn.execute(
+                "UPDATE tokenizer_catalog.text_analyzer "
+                "SET config = '{\"character_filters\":[\"to_lowercase\"],\"pre_tokenizer\":\"unicode_segmentation\",\"token_filters\":[]}' "
+                "WHERE name = 'rb_an'"
+            )
+            self.assertEqual(
+                conn.execute("SELECT apply_text_analyzer('Hello', 'rb_an')").fetchone()[0],
+                ["hello"],
+            )
+            conn.execute("ROLLBACK TO SAVEPOINT sp_dirty")
+            self.assertEqual(
+                conn.execute("SELECT apply_text_analyzer('Hello', 'rb_an')").fetchone()[0],
+                ["Hello"],
+            )
+            conn.execute("COMMIT")
+
+    def test_primary_fast_path_zero_version_and_depend_scans(self):
+        self.db.execute(
+            "SELECT create_text_analyzer('fp_an', 'character_filters = [\"to_lowercase\"]\npre_tokenizer = \"unicode_segmentation\"')"
+        )
+        self.db.execute(
+            "SELECT create_tokenizer('fp_tok', 'text_analyzer = \"fp_an\"\nmodel = \"bert_base_uncased\"')"
+        )
+        with self.connect() as conn:
+            # Warm cache and enter fast path.
+            for _ in range(2):
+                conn.execute("SELECT apply_text_analyzer('Hello World', 'fp_an')")
+                conn.execute("SELECT tokenize('Hello World', 'fp_tok')")
+                conn.execute("SELECT analyze_to_tsvector('Hello World', 'fp_an')")
+                conn.execute("SELECT tokenize_to_tsvector('Hello World', 'fp_tok')")
+            conn.execute("SELECT pg_stat_force_next_flush()")
+            time.sleep(0.05)
+            before = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version_pkey'::regclass), 0), "
+                "coalesce(pg_stat_get_numscans('pg_depend'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('pg_depend_depender_index'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('pg_depend_reference_index'::regclass), 0)"
+            ).fetchone()
+
+            for _ in range(50):
+                conn.execute("SELECT apply_text_analyzer('Hello World', 'fp_an')")
+                conn.execute("SELECT tokenize('Hello World', 'fp_tok')")
+                conn.execute("SELECT analyze_to_tsvector('Hello World', 'fp_an')")
+                conn.execute("SELECT tokenize_to_tsvector('Hello World', 'fp_tok')")
+
+            conn.execute("SELECT pg_stat_force_next_flush()")
+            time.sleep(0.05)
+            after = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('tokenizer_catalog.definition_version_pkey'::regclass), 0), "
+                "coalesce(pg_stat_get_numscans('pg_depend'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('pg_depend_depender_index'::regclass), 0) "
+                "+ coalesce(pg_stat_get_numscans('pg_depend_reference_index'::regclass), 0)"
+            ).fetchone()
+            self.assertEqual(after, before)
+
+    def test_custom_model_insert_avoids_full_vocab_seq_scans(self):
+        self.make_model(self.db, "idxscan")
+        # Seed 1,500 distinct words and ANALYZE so the vocabulary spans enough
+        # heap pages for PostgreSQL's planner to choose the unique token index.
+        seed = " ".join(f"seedword{i}" for i in range(1500))
+        self.db.execute("INSERT INTO idxscan(body) VALUES (%s)", (seed,))
+        self.db.execute("ANALYZE tokenizer_data.model_idxscan")
+        with self.connect() as conn:
+            # Warm trigger plans.
+            conn.execute("INSERT INTO idxscan(body) VALUES ('seedword0 seedword1')")
+            conn.execute("SELECT pg_stat_force_next_flush()")
+            time.sleep(0.05)
+            seq_before, idx_before = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_data.model_idxscan'::regclass), 0), "
+                "coalesce(pg_stat_get_numscans('tokenizer_data.model_idxscan_token_key'::regclass), 0)"
+            ).fetchone()
+            seq_val_before = conn.execute(
+                "SELECT last_value FROM tokenizer_data.model_idxscan_id_seq"
+            ).fetchone()[0]
+
+            # Known-only inserts must not seq-scan the vocabulary or consume sequence IDs.
+            for i in range(50):
+                conn.execute(
+                    "INSERT INTO idxscan(body) VALUES (%s)",
+                    (f"seedword{i} seedword{i + 1} seedword{i}",),
+                )
+            seq_val_known = conn.execute(
+                "SELECT last_value FROM tokenizer_data.model_idxscan_id_seq"
+            ).fetchone()[0]
+            self.assertEqual(seq_val_known, seq_val_before)
+
+            # New-word inserts must also use the unique index rather than per-row seq scans.
+            for i in range(50):
+                conn.execute(
+                    "INSERT INTO idxscan(body) VALUES (%s)",
+                    (f"seedword{i} newword{i} newword{i} extra{i}",),
+                )
+            conn.execute("SELECT pg_stat_force_next_flush()")
+            time.sleep(0.05)
+            seq_after, idx_after = conn.execute(
+                "SELECT coalesce(pg_stat_get_numscans('tokenizer_data.model_idxscan'::regclass), 0), "
+                "coalesce(pg_stat_get_numscans('tokenizer_data.model_idxscan_token_key'::regclass), 0)"
+            ).fetchone()
+            self.assertEqual(seq_after, seq_before)
+            self.assertGreater(idx_after, idx_before)
+            self.assert_embeddings(conn, "idxscan")
+
+    def test_intervening_before_trigger_filter_change_preserves_target(self):
+        self.db.execute(
+            "CREATE TABLE flip_docs (id int, active boolean, body text, embedding int[])"
+        )
+        self.db.execute(
+            "SELECT create_text_analyzer('flip_an', 'pre_tokenizer = \"unicode_segmentation\"')"
+        )
+        self.db.execute(
+            "SELECT create_custom_model_tokenizer_and_trigger("
+            "'flip_tok', 'flip_mod', 'flip_an', 'flip_docs', 'body', 'embedding', 'active')"
+        )
+        # Alphabetically between model_flip_mod_trigger and model_flip_mod_trigger_insert.
+        self.db.execute("""
+            CREATE FUNCTION pg_temp.flip_flag() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                NEW.active := false;
+                RETURN NEW;
+            END $$
+        """)
+        self.db.execute("""
+            CREATE TRIGGER model_flip_mod_trigger_b_flip
+            BEFORE INSERT ON flip_docs FOR EACH ROW
+            EXECUTE FUNCTION pg_temp.flip_flag()
+        """)
+        self.db.execute(
+            "INSERT INTO flip_docs VALUES (1, true, 'alpha beta', ARRAY[777])"
+        )
+        self.assertEqual(
+            self.db.execute("SELECT active, embedding FROM flip_docs WHERE id = 1").fetchone(),
+            (False, [777]),
+        )
+
+    def test_native_tsvector_binary_parity_with_tsvectorin(self):
+        self.db.execute(
+            "SELECT create_text_analyzer('tsv_an', 'pre_tokenizer = \"unicode_segmentation\"')"
+        )
+        self.db.execute("SELECT create_text_analyzer('tsv_raw', '')")
+        self.db.execute(
+            "SELECT create_tokenizer('tsv_tok', 'text_analyzer = \"tsv_an\"\nmodel = \"bert_base_uncased\"')"
+        )
+        samples = [
+            "",
+            "   ",
+            "hello world hello",
+            "b aa z a",
+            "中文分词 PostgreSQL 18 向量检索 中文分词",
+            " ".join(["dup"] * 255 + ["tail"]),
+            " ".join(["dup"] * 256 + ["tail"]),
+            " ".join(["dup"] * 257 + ["tail"]),
+            " ".join(["x"] * 16381 + ["a", "b", "a", "b", "late"]),
+        ]
+        for s in samples:
+            native_a, oracle_a = self.db.execute(
+                "SELECT tsvectorsend(analyze_to_tsvector(%s, 'tsv_an')), "
+                "tsvectorsend(_analyze_to_tsvector_text(%s, 'tsv_an')::tsvector)",
+                (s, s),
+            ).fetchone()
+            self.assertEqual(native_a, oracle_a, f"analyze mismatch on len={len(s)}")
+
+            native_t, oracle_t = self.db.execute(
+                "SELECT tsvectorsend(tokenize_to_tsvector(%s, 'tsv_tok')), "
+                "tsvectorsend(_tokens_to_tsvector_text(tokenize(%s, 'tsv_tok')::text[])::tsvector)",
+                (s, s),
+            ).fetchone()
+            self.assertEqual(native_t, oracle_t, f"tokenize mismatch on len={len(s)}")
+
+        # Quotes, backslashes, spaces, 2046B kept and 2047B skipped.
+        for raw in ["'\\", "a 'b' \\c", "y" * 2046, "x" * 2047]:
+            native_r, oracle_r = self.db.execute(
+                "SELECT tsvectorsend(analyze_to_tsvector(%s, 'tsv_raw')), "
+                "tsvectorsend(_analyze_to_tsvector_text(%s, 'tsv_raw')::tsvector)",
+                (raw, raw),
+            ).fetchone()
+            self.assertEqual(native_r, oracle_r, f"raw mismatch on len={len(raw)}")
+
+        # Exceeding PostgreSQL's MAXSTRPOS (1_048_575) raises SQLSTATE 54000.
+        huge = " ".join(f"w{i:06d}{'a' * 100}" for i in range(10000))
+        with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+            self.db.execute("SELECT analyze_to_tsvector(%s, 'tsv_an')", (huge,))
+
+    def test_row_validator_rollback_discards_uncommitted_analyzer(self):
+        self.db.execute("""
+            CREATE FUNCTION validate_analyzer() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN
+                PERFORM tokenizer_catalog.apply_text_analyzer('ABC', NEW.name);
+                RAISE EXCEPTION 'definition rejected';
+            END $$""")
+        self.db.execute("""
+            CREATE TRIGGER validate_analyzer AFTER INSERT ON tokenizer_catalog.text_analyzer
+            FOR EACH ROW EXECUTE FUNCTION validate_analyzer()""")
+        with self.db.transaction():
+            with self.assertRaisesRegex(psycopg.errors.RaiseException, "definition rejected"):
+                with self.db.transaction():
+                    self.db.execute("INSERT INTO tokenizer_catalog.text_analyzer VALUES ('rejected', '{}')")
+        with self.assertRaisesRegex(psycopg.Error, "TextAnalyzer not found"):
+            self.analyze("ABC", "rejected")
+
+    def test_legacy_sql_from_120_nested_rollback_reuses_version(self):
+        self.db.execute("SELECT create_text_analyzer('existing', '')")
+        with self.db.transaction():
+            self.db.execute("SELECT create_text_analyzer('outer_api', '')")
+            self.db.execute("SAVEPOINT definition")
+            self.db.execute("""UPDATE tokenizer_catalog.text_analyzer
+                SET config = '{"character_filters":["to_lowercase"]}' WHERE name='existing'""")
+            self.assertEqual(self.analyze("ABC", "existing"), ["abc"])
+            self.db.execute("ROLLBACK TO definition")
+            self.db.execute("UPDATE tokenizer_catalog.text_analyzer SET config='{}' WHERE name='existing'")
+            self.assertEqual(self.analyze("ABC", "existing"), ["ABC"])
+
+    def test_custom_vocabulary_cursor_uses_statement_snapshot(self):
+        self.make_model(self.db)
+        self.db.execute("INSERT INTO race(body) VALUES ('known')")
+        with self.connect() as other, self.db.transaction():
+            self.db.execute("""DECLARE words CURSOR FOR
+                SELECT (SELECT id FROM model_race WHERE token = word), tokenize(word, 'race')
+                FROM (VALUES ('known'::text), ('later')) AS words(word)""")
+            known, ids = self.db.execute("FETCH 1 FROM words").fetchone()
+            self.assertEqual(ids, [known])
+            later = other.execute("INSERT INTO race(body) VALUES ('later') RETURNING embedding").fetchone()[0]
+            self.assertEqual(self.db.execute("FETCH 1 FROM words").fetchone(), (None, []))
+        self.assertEqual(self.db.execute("SELECT tokenize('later', 'race')").fetchone()[0], later)
+        self.assertEqual(len(later), 1)
+
+    def test_custom_assignment_uses_replaced_cast(self):
+        self.db.execute("CREATE TYPE target_enum AS ENUM ('a', 'b')")
+        cast = """CREATE OR REPLACE FUNCTION to_target_enum(int[]) RETURNS target_enum
+                  LANGUAGE SQL IMMUTABLE AS $$ SELECT '{}'::target_enum $$"""
+        self.db.execute(cast.format('a'))
+        self.db.execute("CREATE CAST (int[] AS target_enum) WITH FUNCTION to_target_enum(int[]) AS ASSIGNMENT")
+        self.db.execute("CREATE TABLE assigned(body text, ids target_enum)")
+        self.db.execute("SELECT create_text_analyzer('terms', '')")
+        self.db.execute("""SELECT create_custom_model_tokenizer_and_trigger(
+            'tokens', 'words', 'terms', 'assigned', 'body', 'ids')""")
+        with self.db.transaction():
+            insert = "INSERT INTO assigned(body) VALUES ('one') RETURNING ids"
+            self.assertEqual(self.db.execute(insert).fetchone()[0], 'a')
+            self.db.execute(cast.format('b'))
+            self.assertEqual(self.db.execute(insert).fetchone()[0], 'b')
+
+    def test_custom_predicate_uses_current_datestyle(self):
+        self.db.execute("SET DateStyle='ISO, MDY'")
+        self.db.execute("CREATE TABLE dated(body text, d date, ids int[])")
+        self.db.execute("SELECT create_text_analyzer('terms', '')")
+        self.db.execute("""SELECT create_custom_model_tokenizer_and_trigger(
+            'tokens', 'words', 'terms', 'dated', 'body', 'ids', %s)""", ("d = '01/02/2026'::date",))
+        first = self.db.execute("INSERT INTO dated VALUES ('word', date '2026-01-02') RETURNING ids").fetchone()[0]
+        self.db.execute("SET DateStyle='ISO, DMY'")
+        second = self.db.execute("INSERT INTO dated VALUES ('word', date '2026-02-01') RETURNING ids").fetchone()[0]
+        self.assertEqual(len(first), 1)
+        self.assertEqual(second, first)
+
+    def test_custom_target_honors_tokenize_settings_and_execute(self):
+        self.make_model(self.db)
+        self.db.execute("INSERT INTO race(body) VALUES ('first second')")
+        self.db.execute("ALTER FUNCTION tokenize(text, text) SET pg_tokenizer.max_output_tokens = 1")
+        with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+            self.db.execute("INSERT INTO race(body) VALUES ('first second')")
+        self.db.execute("ALTER FUNCTION tokenize(text, text) RESET pg_tokenizer.max_output_tokens")
+        # This writer can maintain the vocabulary and insert source rows.
+        grants = ["GRANT INSERT ON race TO {}", "GRANT USAGE ON SCHEMA tokenizer_catalog, tokenizer_data TO {}",
+                  "GRANT SELECT ON ALL TABLES IN SCHEMA tokenizer_catalog TO {}",
+                  "GRANT INSERT(token), SELECT(token), SELECT(id) ON model_race TO {}"]
+        for grant in grants:
+            self.db.execute(sql.SQL(grant).format(sql.Identifier(self.outsider)))
+        self.db.execute("REVOKE EXECUTE ON FUNCTION tokenize(text,text) FROM PUBLIC")
+        with self.connect(user=self.outsider) as writer:
+            with self.assertRaisesRegex(psycopg.errors.InsufficientPrivilege, "function tokenize"):
+                writer.execute("INSERT INTO race(body) VALUES ('first')")
+
+    def test_custom_identity_split_budget(self):
+        self.make_model(self.db)
+        self.db.execute("SELECT create_tokenizer('identity_model', 'model=\"race\"')")
+        self.db.execute("SET pg_tokenizer.max_output_tokens = 1")
+        with self.assertRaises(psycopg.errors.ProgramLimitExceeded):
+            self.db.execute("SELECT tokenize(%s, 'identity_model')", ('x' * 2601,))
+
+    def test_vocabulary_schema_membership_refreshes_cached_plan(self):
+        self.make_model(self.db)
+        self.db.execute("INSERT INTO race(body) VALUES ('known')")
+        lookup = "SELECT tokenize('known', 'race')"
+        with self.connect() as reader:
+            expected = reader.execute(lookup).fetchone()
+            self.assertEqual(len(expected[0]), 1)
+            self.db.execute("ALTER EXTENSION pg_tokenizer DROP SCHEMA tokenizer_data")
+            with self.assertRaises(psycopg.errors.UndefinedTable):
+                reader.execute(lookup)
+            self.db.execute("ALTER EXTENSION pg_tokenizer ADD SCHEMA tokenizer_data")
+            self.assertEqual(reader.execute(lookup).fetchone(), expected)
+
+    def test_custom_vocabulary_writer_column_privileges_and_collation(self):
+        self.db.execute("CREATE TABLE source(body text)")
+        self.db.execute("SELECT create_text_analyzer('plain','')")
+        self.db.execute("SELECT create_custom_model('dict', %s)",
+                        ('table="public.source"\ncolumn="body"\ntext_analyzer="plain"',))
+        self.db.execute("SELECT create_tokenizer('lookup', 'model=\"dict\"')")
+        self.db.execute("INSERT INTO source VALUES ('known')")
+        for grant in ("GRANT INSERT ON source TO {}", "GRANT USAGE ON SCHEMA tokenizer_catalog, tokenizer_data TO {}",
+                      "GRANT SELECT ON ALL TABLES IN SCHEMA tokenizer_catalog TO {}",
+                      "GRANT SELECT(token), INSERT(token) ON model_dict TO {}"):
+            self.db.execute(sql.SQL(grant).format(sql.Identifier(self.outsider)))
+        with self.connect(user=self.outsider) as writer:
+            writer.execute("INSERT INTO source VALUES ('known'), ('new')")
+        self.assertEqual(self.db.execute("SELECT count(*) FROM model_dict").fetchone()[0], 2)
+        with self.subTest(provider="icu"):
+            try:
+                self.db.execute("CREATE COLLATION folded (provider=icu,locale='und-u-ks-level2',deterministic=false)")
+            except psycopg.errors.FeatureNotSupported as error:
+                self.skipTest(error.diag.message_primary)
+            self.db.execute("ALTER TABLE model_dict ALTER COLUMN token TYPE text COLLATE folded")
+            seq = "SELECT last_value FROM model_dict_id_seq"
+            before = self.db.execute(seq).fetchone()
+            self.db.execute("INSERT INTO source VALUES ('KNOWN')")
+            self.assertEqual(self.db.execute(seq).fetchone(), before)
+            self.assertEqual(self.db.execute("SELECT tokenize('KNOWN','lookup')").fetchone()[0], [])
+
+    def test_definition_version_membership_savepoint_and_prepare(self):
+        if int(self.db.execute("SHOW max_prepared_transactions").fetchone()[0]) == 0:
+            self.skipTest("max_prepared_transactions is zero")
+        self.db.execute("SELECT create_text_analyzer('plain', '')")
+        read = "SELECT apply_text_analyzer('one', 'plain')"
+        detach = "ALTER EXTENSION pg_tokenizer DROP TABLE tokenizer_catalog.definition_version"
+        attach = "ALTER EXTENSION pg_tokenizer ADD TABLE tokenizer_catalog.definition_version"
+        gid = sql.Literal(self.dbname)
+        with self.connect() as reader:
+            self.assertEqual(reader.execute(read).fetchone()[0], ['one'])
+            self.db.execute("DELETE FROM tokenizer_catalog.definition_version")
+            with self.db.transaction():
+                self.db.execute("SAVEPOINT member")
+                self.db.execute(detach)
+                self.assertEqual(self.db.execute(read).fetchone()[0], ['one'])
+                self.db.execute("ROLLBACK TO member")
+                with self.assertRaisesRegex(psycopg.Error, "definition version is missing"):
+                    with self.db.transaction():
+                        self.db.execute(read)
+            self.db.execute("BEGIN")
+            self.db.execute(detach)
+            self.db.execute(sql.SQL("PREPARE TRANSACTION {}").format(gid))
+            try:
+                with self.assertRaisesRegex(psycopg.Error, "definition version is missing"):
+                    reader.execute(read)
+            finally:
+                self.db.execute(sql.SQL("COMMIT PREPARED {}").format(gid))
+            self.assertEqual(reader.execute(read).fetchone()[0], ['one'])
+            self.db.execute(attach)
+            with self.assertRaisesRegex(psycopg.Error, "definition version is missing"):
+                reader.execute(read)
+
+    def test_delete_definition_version_invalidates_fast_path(self):
+        self.db.execute(
+            "SELECT create_text_analyzer('dv_an', 'pre_tokenizer = \"unicode_segmentation\"')"
+        )
+        with self.connect() as reader, self.connect() as admin:
+            self.assertEqual(
+                reader.execute("SELECT apply_text_analyzer('hello', 'dv_an')").fetchone()[0],
+                ["hello"],
+            )
+            self.assertEqual(
+                reader.execute("SELECT apply_text_analyzer('hello', 'dv_an')").fetchone()[0],
+                ["hello"],
+            )
+            admin.execute("DELETE FROM tokenizer_catalog.definition_version")
+            with self.assertRaisesRegex(psycopg.Error, "definition version is missing"):
+                reader.execute("SELECT apply_text_analyzer('hello', 'dv_an')")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

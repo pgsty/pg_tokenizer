@@ -18,6 +18,12 @@ use unicode_normalization::UnicodeNormalizationConfig;
 
 pub trait CharacterFilter {
     fn apply(&self, text: &mut Cow<str>);
+
+    #[doc(hidden)]
+    fn apply_with_limits(&self, text: &mut Cow<str>, limits: crate::budget::Limits) {
+        self.apply(text);
+        limits.check_bytes(text.len());
+    }
 }
 pub type CharacterFilterPtr = Arc<dyn CharacterFilter + Send + Sync>;
 

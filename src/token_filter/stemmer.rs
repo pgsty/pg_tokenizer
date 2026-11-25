@@ -104,13 +104,23 @@ impl TokenFilter for StemmerTokenFilter {
         vec![stemmed.into_owned()]
     }
 
-    fn apply_batch(&self, mut tokens: Vec<String>) -> Vec<String> {
-        for token in tokens.iter_mut() {
-            crate::utils::check_for_interrupts();
+    fn apply_batch(&self, tokens: Vec<String>) -> Vec<String> {
+        self.apply_batch_with_limits(tokens, crate::budget::Limits::current())
+    }
+
+    fn apply_batch_with_limits(
+        &self,
+        mut tokens: Vec<String>,
+        limits: crate::budget::Limits,
+    ) -> Vec<String> {
+        let mut budget = crate::budget::Output::new(limits);
+        for (i, token) in tokens.iter_mut().enumerate() {
+            crate::utils::check_for_interrupts_every(i);
             let stemmed = self.stemmer.stem(token);
             if let Cow::Owned(s) = stemmed {
                 *token = s;
             }
+            budget.text(token.len());
         }
         tokens
     }

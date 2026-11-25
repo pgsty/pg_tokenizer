@@ -152,6 +152,7 @@ class InstallTests(unittest.TestCase):
         self.assertFalse((self.build / "package-test").exists())
         self.assertIn("share/extension/pg_tokenizer--1.0.0--1.1.0.sql", manifest["files"])
         self.assertIn("share/extension/pg_tokenizer--1.1.0--1.2.0.sql", manifest["files"])
+        self.assertIn("share/extension/pg_tokenizer--1.2.0--1.3.0.sql", manifest["files"])
         self.install()
         self.assertEqual((self.dest / "lib/pg_tokenizer.so").read_bytes(), b"new build")
 

@@ -1,6 +1,6 @@
 # Installation
 
-`pg_tokenizer` 1.2.0 supports **PostgreSQL 15–19** on **`x86_64` and `aarch64`**.
+`pg_tokenizer` 1.3.0 supports **PostgreSQL 15–19** on **`x86_64` and `aarch64`**.
 
 `pg_tokenizer` must be loaded via `shared_preload_libraries` before PostgreSQL starts. If `shared_preload_libraries` already lists other extensions (such as `vchord` or `vchord_bm25`), keep them when adding `pg_tokenizer`.
 
@@ -14,20 +14,22 @@ pig repo add pgsql -u
 pig ext add pg_tokenizer
 ```
 
-Pigsty RPM and DEB packages omit embedded Lindera dictionaries to keep package sizes small. For `pg_tokenizer` 1.2.0, provide external system dictionaries built with Lindera 7 (format v3). The GitHub release workflow enables `lindera-ipadic` to embed IPADIC in its `.deb` and `.zip` packages.
+Pigsty RPM and DEB packages omit embedded Lindera dictionaries to keep package sizes small. For `pg_tokenizer` 1.3.0, provide external system dictionaries built with Lindera 7 (format v3). The GitHub release workflow enables `lindera-ipadic` to embed IPADIC in its `.deb` and `.zip` packages.
 
 ## GitHub Release Packages (`.deb` and `.zip`)
 
-The 1.2.0 release workflow targets PostgreSQL 15–19 on `x86_64` (`amd64`) and `aarch64` (`arm64`). The examples use its package names. Check [GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases) for published downloads.
+The 1.3.0 release workflow targets PostgreSQL 15–19 on `x86_64` (`amd64`) and `aarch64` (`arm64`). The examples use its package names. Check [GitHub Releases](https://github.com/pgsty/pg_tokenizer/releases) for published downloads.
 
 Prebuilt GitHub binaries are compiled on Ubuntu 24.04 and require **`glibc >= 2.39`** (Ubuntu 24.04+ or Debian 13+). On older distributions such as EL 8/9, Debian 12, or Ubuntu 22.04, install from the Pigsty repository or build from source.
+
+Check the server minor version as well as the major. Binaries linked to PostgreSQL's newer tuple-header functions require at least 15.20, 16.16, 17.12 or 18.7 on those respective branches. PostgreSQL 19 provides the functions from its first release. The DEB declares its server dependency. For a ZIP, read the minimum in `unzip -p pg_tokenizer.zip pg_tokenizer.control` before replacing a preloaded library. For an older server, use a build made with that server's `pg_config`.
 
 ### From `.deb` Package
 
 1. Download the matching `.deb` for your PostgreSQL major version and CPU architecture, then install it:
 
 ```sh
-sudo apt install ./postgresql-18-pg-tokenizer_1.2.0-1_amd64.deb
+sudo apt install ./postgresql-18-pg-tokenizer_1.3.0-1_amd64.deb
 ```
 
 2. Configure `shared_preload_libraries` (and optionally `search_path`), then restart PostgreSQL:
@@ -49,7 +51,7 @@ CREATE EXTENSION IF NOT EXISTS pg_tokenizer;
 1. Download and extract the matching `.zip` archive for your PostgreSQL major version and architecture:
 
 ```sh
-wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.2.0/postgresql-18-pg-tokenizer_1.2.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
+wget https://github.com/pgsty/pg_tokenizer/releases/download/v1.3.0/postgresql-18-pg-tokenizer_1.3.0_x86_64-linux-gnu.zip -O pg_tokenizer.zip
 unzip pg_tokenizer.zip -d pg_tokenizer
 ```
 
@@ -79,6 +81,18 @@ sudo make PG_CONFIG=/path/to/pg_config install
 
 ## Upgrading
 
+### Upgrading from 1.2.0 to 1.3.0
+
+Install the new library, control file and SQL scripts on the primary and all physical replicas. Restart PostgreSQL on each node to load the new shared library. In each database using the extension, run the following on the primary.
+
+```sql
+ALTER EXTENSION pg_tokenizer UPDATE TO '1.3.0';
+```
+
+The new library can serve databases with the 1.2.0 SQL definitions during this rollout. Updating the SQL enables the primary cache fast path and native `tsvector` functions. The migration preserves existing vocabulary IDs, function dependencies and table triggers.
+
+When pairing with the upstream Linux x86_64 PostgreSQL 18 ZIP for `vchord_bm25 1.3.0`, use a compatible PostgreSQL binary. That BM25 library loaded on PGDG 18.7 and required a symbol (`heap_datum_check`) absent from the tested PGDG 18.6 server. A BM25 build targeting that server can also be used. [BM25 release assets](https://github.com/pgsty/vchord_bm25/releases/tag/1.3.0)
+
 ### Upgrading from 1.1.0 to 1.2.0
 
 1. Ensure PostgreSQL is on version 15–19 (`pgrx 0.20.0` drops PostgreSQL 14 support; upgrade PostgreSQL 14 clusters first).
@@ -106,7 +120,7 @@ To recreate a damaged file, call `tokenizer_catalog.add_preload_model(name)` in 
 
 ### Upgrading from 1.0.0 or 0.1.x
 
-`pg_tokenizer` ships the full migration chain `0.1.0 → 0.1.1 → 1.0.0 → 1.1.0 → 1.2.0`.
+`pg_tokenizer` ships the full migration chain `0.1.0 → 0.1.1 → 1.0.0 → 1.1.0 → 1.2.0 → 1.3.0`.
 
 When upgrading across `1.0.0 → 1.1.0`:
 

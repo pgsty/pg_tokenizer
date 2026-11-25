@@ -19,6 +19,10 @@ use unicode_segmentation::UnicodeSegmentationPretokenizer;
 
 pub trait PreTokenizer {
     fn pre_tokenize<'a>(&self, text: &'a str) -> Vec<&'a str>;
+
+    fn pre_tokenize_owned(&self, text: &str, limits: crate::budget::Limits) -> Vec<String> {
+        crate::budget::owned(self.pre_tokenize(text).into_iter(), limits)
+    }
 }
 pub type PreTokenizerPtr = Arc<dyn PreTokenizer + Send + Sync>;
 
